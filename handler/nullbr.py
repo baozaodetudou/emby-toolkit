@@ -60,62 +60,83 @@ def _parse_size_to_gb(size_str):
     return 0.0
 
 def _is_resource_valid(item, filters, media_type='movie', episode_count=0):
-    """根据配置过滤资源 (保持原有逻辑)"""
-    if not filters: return True
-    
-    # 1. 分辨率
-    if filters.get('resolutions'):
-        res = item.get('resolution')
-        if not res or res not in filters['resolutions']: return False
+    """根据配置过滤资源"""
+    if not filters:
+        return True
 
-    # 2. 质量
-    if filters.get('qualities'):
+    # 1. 分辨率过滤
+    allowed_resolutions = filters.get('resolutions', [])
+    if allowed_resolutions:
+        res = item.get('resolution')
+        if not res or res not in allowed_resolutions:
+            return False
+
+    # 2. 质量过滤
+    allowed_qualities = filters.get('qualities', [])
+    if allowed_qualities:
         item_quality = item.get('quality')
         if not item_quality: return False
         q_list = [item_quality] if isinstance(item_quality, str) else item_quality
-        if not any(q in q_list for q in filters['qualities']): return False
+        if not any(q in q_list for q in allowed_qualities): return False
 
     # 3. 大小过滤 (GB) 
+    min_size = 0.0
+    max_size = 0.0
+
     if media_type == 'tv':
-        min_size = float(filters.get('tv_min_size') or filters.get('min_size') or 0)
-        max_size = float(filters.get('tv_max_size') or filters.get('max_size') or 0)
+        # 优先取 tv_min_size，取不到(None)则尝试取 min_size，最后默认为 0
+        v_min = filters.get('tv_min_size')
+        if v_min is None: v_min = filters.get('min_size')
+        min_size = float(v_min or 0)
+
+        v_max = filters.get('tv_max_size')
+        if v_max is None: v_max = filters.get('max_size')
+        max_size = float(v_max or 0)
     else:
-        min_size = float(filters.get('movie_min_size') or filters.get('min_size') or 0)
-        max_size = float(filters.get('movie_max_size') or filters.get('max_size') or 0)
+        v_min = filters.get('movie_min_size')
+        if v_min is None: v_min = filters.get('min_size')
+        min_size = float(v_min or 0)
+
+        v_max = filters.get('movie_max_size')
+        if v_max is None: v_max = filters.get('max_size')
+        max_size = float(v_max or 0)
     
     if min_size > 0 or max_size > 0:
         size_gb = _parse_size_to_gb(item.get('size'))
         
-        # 如果是剧集且获取到了集数，计算单集平均大小
+        # 计算检查用的数值
         check_size = size_gb
+        
+        # 只有当是剧集、且成功获取到了集数、且集数大于0时，才计算平均大小
         if media_type == 'tv' and episode_count > 0:
             check_size = size_gb / episode_count
-            # 简单的防误判：如果计算出的单集太小（比如小于0.1G），可能是获取到了单集资源而不是整季包
-            # 但这里我们主要目的是过滤整季包，所以按平均值算没问题。
-            # 如果资源本身就是单集（如S01E01），除以总集数后会变得非常小，自然会被 min_size 过滤掉，
-            # 这正好符合“订阅整季”的需求（不要单集散件）。
+            # 调试日志 (可选开启)
+            logger.info(f"  [大小检查] 总大小: {size_gb}G, 集数: {episode_count}, 平均: {check_size:.2f}G (限制: {min_size}-{max_size})")
 
         if min_size > 0 and check_size < min_size:
             return False
         if max_size > 0 and check_size > max_size:
             return False
 
-    # 4. 中字
+    # 4. 中字过滤
     if filters.get('require_zh'):
         if item.get('is_zh_sub'): return True
         title = item.get('title', '').upper()
         zh_keywords = ['中字', '中英', '字幕', 'CHS', 'CHT', 'CN', 'DIY', '国语', '国粤']
         if not any(k in title for k in zh_keywords): return False
 
-    # 5. 容器 (仅电影)
-    if media_type != 'tv' and filters.get('containers'):
+    # 5. 容器过滤
+    allowed_containers = filters.get('containers', [])
+    if allowed_containers:
+        if media_type == 'tv': return True
         title = item.get('title', '').lower()
         link = item.get('link', '').lower()
         ext = None
         if 'mkv' in title or link.endswith('.mkv'): ext = 'mkv'
         elif 'mp4' in title or link.endswith('.mp4'): ext = 'mp4'
         elif 'iso' in title or link.endswith('.iso'): ext = 'iso'
-        if not ext or ext not in filters['containers']: return False
+        elif 'ts' in title or link.endswith('.ts'): ext = 'ts'
+        if not ext or ext not in allowed_containers: return False
 
     return True
 
@@ -339,17 +360,20 @@ def _fetch_single_source(tmdb_id, media_type, source_type, season_number=None):
 
 def fetch_resource_list(tmdb_id, media_type='movie', specific_source=None, season_number=None):
     config = get_config()
+    
     if specific_source:
         sources_to_fetch = [specific_source]
     else:
         sources_to_fetch = config.get('enabled_sources', ['115', 'magnet', 'ed2k'])
-
-    if _user_level_cache.get('daily_quota', 0) > 0 and _user_level_cache.get('daily_used', 0) >= _user_level_cache.get('daily_quota', 0):
-        logger.warning(f"  ⚠️ 今日 API 配额已用完 ({_user_level_cache['daily_used']}/{_user_level_cache['daily_quota']})，跳过请求")
-        raise Exception("今日 API 配额已用完，请明日再试或升级套餐。")
     
+    # 配额检查
+    if _user_level_cache.get('daily_quota', 0) > 0 and _user_level_cache.get('daily_used', 0) >= _user_level_cache.get('daily_quota', 0):
+        logger.warning(f"本地缓存显示配额已用完，跳过请求")
+        raise Exception("今日 API 配额已用完，请明日再试或升级套餐。")
+
     all_resources = []
     
+    # 1. 获取资源
     if '115' in sources_to_fetch:
         try: all_resources.extend(_fetch_single_source(tmdb_id, media_type, '115', season_number))
         except: pass
@@ -360,30 +384,50 @@ def fetch_resource_list(tmdb_id, media_type='movie', specific_source=None, seaso
         try: all_resources.extend(_fetch_single_source(tmdb_id, media_type, 'ed2k'))
         except: pass
     
+    # 2. 获取过滤配置
     filters = config.get('filters', {})
-    # 如果 filters 全为空值，则不过滤
-    has_filter = any(filters.values())
-    if not has_filter:
+    if not any(filters.values()):
         return all_resources
-        
-    # 如果是剧集，获取该季的总集数，用于后续按单集平均大小过滤
+
+    # ★★★ 3. 智能获取集数 (核心修复) ★★★
     episode_count = 0
-    if media_type == 'tv' and season_number:
+    should_fetch_ep_count = False
+    
+    # 只有是剧集且有季号时才考虑
+    if media_type == 'tv' and season_number is not None:
+        # 检查是否配置了大小限制 (只要配置了 min 或 max 且大于0)
+        t_min = filters.get('tv_min_size')
+        if t_min is None: t_min = filters.get('min_size')
+        
+        t_max = filters.get('tv_max_size')
+        if t_max is None: t_max = filters.get('max_size')
+        
+        try:
+            if (t_min and float(t_min) > 0) or (t_max and float(t_max) > 0):
+                should_fetch_ep_count = True
+        except:
+            pass # 转换失败忽略
+
+    if should_fetch_ep_count:
         try:
             tmdb_api_key = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_TMDB_API_KEY)
             if tmdb_api_key:
+                # 调用 TMDb 接口
                 season_info = tmdb.get_tv_season_details(tmdb_id, season_number, tmdb_api_key)
                 if season_info and 'episodes' in season_info:
                     episode_count = len(season_info['episodes'])
-                    logger.info(f"  ➜ [NULLBR] 获取到 第 {season_number} 季 总集数: {episode_count}，将按单集平均大小过滤。")
+                    logger.info(f"  ➜ [过滤优化] 获取到 S{season_number} 总集数: {episode_count}，将按单集平均大小过滤。")
+                else:
+                    logger.warning(f"  ⚠️ TMDb 未返回 S{season_number} 的分集信息，将回退到按总大小过滤。")
         except Exception as e:
-            logger.warning(f"  ⚠️ 获取 TMDb 季集数失败，将按总大小过滤: {e}")
+            logger.warning(f"  ⚠️ 获取 TMDb 季集数失败: {e}")
 
-    # 5. 执行过滤 (传入 episode_count)
+    # 4. 执行过滤
     filtered_list = [
         res for res in all_resources 
         if _is_resource_valid(res, filters, media_type, episode_count=episode_count)
     ]
+    
     logger.info(f"  ➜ 资源过滤: 原始 {len(all_resources)} -> 过滤后 {len(filtered_list)}")
     return filtered_list
 
