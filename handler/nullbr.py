@@ -404,12 +404,12 @@ def fetch_resource_list(tmdb_id, media_type='movie', specific_source=None, seaso
     # 如果开启了容器过滤，强制跳过磁力链 搜索以节省配额，因为磁力链的容器信息通常不可靠，且过滤后命中率较低
     allowed_containers = filters.get('containers', [])
     if allowed_containers and 'magnet' in sources_to_fetch:
-        logger.info(f"  ➜ [配置] 检测到开启了容器过滤 ({allowed_containers})，已自动跳过磁力链搜索以节省配额。")
+        logger.debug(f"  ➜ [NULLBR] 检测到开启了容器过滤 ({allowed_containers})，已跳过磁力链搜索以节省配额。")
         sources_to_fetch.remove('magnet')
     
     # 配额检查
     if _user_level_cache.get('daily_quota', 0) > 0 and _user_level_cache.get('daily_used', 0) >= _user_level_cache.get('daily_quota', 0):
-        logger.warning(f"本地缓存显示配额已用完，跳过请求")
+        logger.warning(f"  ⚠️ 今日配额已用完，跳过请求")
         raise Exception("今日 API 配额已用完，请明日再试或升级套餐。")
 
     all_resources = []
