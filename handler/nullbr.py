@@ -793,5 +793,5 @@ def auto_download_best_resource(tmdb_id, media_type, title, season_number=None, 
         return False
 
     except Exception as e:
-        logger.error(f"  ➜ NULLBR 自动兜底失败: {e}")
+        logger.error(f"  ➜ NULLBR 搜索失败: {e}")
         return False
