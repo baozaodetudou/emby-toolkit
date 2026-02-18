@@ -137,7 +137,24 @@
                   </n-alert>
                 </n-collapse-transition>
                 <n-form-item label="Cookies" :show-feedback="false" style="margin-bottom: 12px;">
-                  <n-input v-model:value="config.p115_cookies" type="textarea" placeholder="UID=...; CID=...; SEID=..." :rows="3" size="small"/>
+                  <n-input-group>
+                    <n-input 
+                      readonly 
+                      :value="config.p115_cookies ? '已配置 (点击右侧按钮修改)' : '未配置'" 
+                      :placeholder="config.p115_cookies ? '' : '未配置'"
+                      style="pointer-events: none;"
+                    >
+                      <template #prefix>
+                        <n-icon :color="config.p115_cookies ? '#18a058' : '#999'">
+                          <component :is="config.p115_cookies ? CheckIcon : CloseIcon" />
+                        </n-icon>
+                      </template>
+                    </n-input>
+                    <n-button type="primary" secondary @click="showCookieModal = true">
+                      <template #icon><n-icon><SettingsIcon /></n-icon></template>
+                      设置 Cookie
+                    </n-button>
+                  </n-input-group>
                 </n-form-item>
                 <n-form-item label="保存目录 CID">
                   <n-input v-model:value="config.p115_save_path_cid" placeholder="0 为根目录" />
@@ -156,44 +173,21 @@
                 
                 <n-collapse-transition :show="config.enable_smart_organize">
                   <p style="font-size: 12px; color: #999; margin-bottom: 12px;">
-                    开启后，系统将接管整理权限，根据下方规则将资源移动到指定分类目录。规则从上到下依次匹配，一旦匹配成功将停止继续匹配后续规则。
-                    <br>未命中规则的资源将仅执行重命名，保留在默认保存目录。
+                    开启后，系统将接管整理权限。规则从上到下依次匹配，一旦匹配成功将停止继续匹配。
                   </p>
                   
-                  <!-- 规则列表 -->
-                  <div class="rules-container">
-                    <!-- ★★★ 修复：确保 list 属性绑定正确 ★★★ -->
-                    <draggable 
-                      v-model="sortingRules" 
-                      item-key="id" 
-                      handle=".drag-handle" 
-                      @end="saveSortingRules"
-                      :animation="200"
-                    >
-                      <template #item="{ element: rule }">
-                        <div class="rule-item">
-                          <n-icon class="drag-handle" :component="DragHandleIcon" />
-                          <div class="rule-info">
-                            <div class="rule-name">{{ rule.name }}</div>
-                            <div class="rule-desc">
-                               <n-tag size="tiny" :bordered="false" type="info">CID: {{ rule.cid }}</n-tag>
-                               <span style="margin-left: 8px; font-size: 12px; color: #666;">{{ getRuleSummary(rule) }}</span>
-                            </div>
-                          </div>
-                          <div class="rule-actions">
-                            <n-switch v-model:value="rule.enabled" size="small" @update:value="saveSortingRules" />
-                            <n-button text size="small" @click="editRule(rule)"><n-icon :component="EditIcon" /></n-button>
-                            <n-button text size="small" type="error" @click="deleteRule(rule)"><n-icon :component="DeleteIcon" /></n-button>
-                          </div>
-                        </div>
-                      </template>
-                    </draggable>
-                    
-                    <n-empty v-if="sortingRules.length === 0" description="暂无规则，点击下方添加" style="margin: 10px 0;" />
-
-                    <n-button dashed block style="margin-top: 8px;" @click="addRule">
-                      <template #icon><n-icon :component="AddIcon" /></template>
-                      添加分类规则
+                  <!-- 规则概览与入口 -->
+                  <div class="organize-summary-box">
+                    <div style="display: flex; align-items: center;">
+                      <n-icon size="24" color="#f0a020" style="margin-right: 12px;"><ListIcon /></n-icon>
+                      <div style="display: flex; flex-direction: column;">
+                        <span style="font-weight: bold; font-size: 14px;">已配置 {{ sortingRules.length }} 条分类规则</span>
+                        <span style="font-size: 12px; opacity: 0.7;">点击右侧按钮进行排序、添加或修改</span>
+                      </div>
+                    </div>
+                    <n-button type="primary" secondary @click="showRuleManagerModal = true">
+                      <template #icon><n-icon><SettingsIcon /></n-icon></template>
+                      配置分类规则
                     </n-button>
                   </div>
                 </n-collapse-transition>
@@ -560,6 +554,94 @@
         </n-space>
       </template>
     </n-modal>
+    <!-- 规则管理模态框 -->
+    <n-modal v-model:show="showRuleManagerModal" preset="card" title="分类规则管理" style="width: 800px; max-width: 95%; height: 80vh;">
+      <template #header-extra>
+        <n-tag type="warning" size="small" :bordered="false">拖拽可调整优先级</n-tag>
+      </template>
+      
+      <div style="display: flex; flex-direction: column; height: 100%;">
+        <!-- 规则列表区域 (可滚动) -->
+        <div style="flex: 1; overflow-y: auto; padding-right: 4px; margin-bottom: 16px;">
+          <div class="rules-container" style="border: none; background: transparent; padding: 0;">
+            <draggable 
+              v-model="sortingRules" 
+              item-key="id" 
+              handle=".drag-handle" 
+              @end="saveSortingRules"
+              :animation="200"
+            >
+              <template #item="{ element: rule }">
+                <div class="rule-item">
+                  <n-icon class="drag-handle" :component="DragHandleIcon" size="20" />
+                  <div class="rule-info">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div class="rule-name">{{ rule.name }}</div>
+                      <n-tag v-if="!rule.enabled" size="tiny" type="error" :bordered="false">已禁用</n-tag>
+                    </div>
+                    <div class="rule-desc">
+                        <n-tag size="tiny" :bordered="false" type="info">CID: {{ rule.cid }}</n-tag>
+                        <span style="margin-left: 8px; font-size: 12px; color: #666;">{{ getRuleSummary(rule) }}</span>
+                    </div>
+                  </div>
+                  <div class="rule-actions">
+                    <n-switch v-model:value="rule.enabled" size="small" @update:value="saveSortingRules">
+                       <template #checked>开</template>
+                       <template #unchecked>关</template>
+                    </n-switch>
+                    <n-divider vertical />
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-button text size="medium" @click="editRule(rule)"><n-icon :component="EditIcon" color="#18a058" /></n-button>
+                      </template>
+                      编辑
+                    </n-tooltip>
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-button text size="medium" @click="deleteRule(rule)"><n-icon :component="DeleteIcon" color="#d03050" /></n-button>
+                      </template>
+                      删除
+                    </n-tooltip>
+                  </div>
+                </div>
+              </template>
+            </draggable>
+            
+            <n-empty v-if="sortingRules.length === 0" description="暂无规则，请添加" style="margin: 40px 0;" />
+          </div>
+        </div>
+
+        <!-- 底部操作区 -->
+        <div style="border-top: 1px solid #eee; padding-top: 16px;">
+          <n-button type="primary" dashed block @click="addRule">
+            <template #icon><n-icon :component="AddIcon" /></template>
+            添加新规则
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
+    <!-- 115 Cookie 编辑弹窗 -->
+    <n-modal v-model:show="showCookieModal" preset="card" title="配置 115 Cookies" style="width: 600px;">
+      <n-alert type="info" :show-icon="true" style="margin-bottom: 16px;">
+        请使用浏览器开发者工具 (F12) 获取 115.com 的 Cookie 信息。
+        <br>格式通常为: UID=...; CID=...; SEID=...
+      </n-alert>
+      <n-form-item label="Cookies 内容" :show-feedback="false">
+        <n-input 
+          v-model:value="config.p115_cookies" 
+          type="textarea" 
+          placeholder="UID=...; CID=...; SEID=..." 
+          :rows="8" 
+          :autosize="{ minRows: 5, maxRows: 10 }"
+        />
+      </n-form-item>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showCookieModal = false">取消</n-button>
+          <n-button type="primary" @click="showCookieModal = false; check115Status()">确定并检查</n-button>
+        </n-space>
+      </template>
+    </n-modal>
     <!-- 资源选择弹窗 -->
     <NullbrSearchModal ref="nullbrModalRef" />
   </n-layout>
@@ -594,6 +676,7 @@ const message = useMessage();
 
 // --- 配置相关 ---
 const showConfig = ref(false);
+const showCookieModal = ref(false);
 const config = reactive({
   api_key: '',
   p115_cookies: '',
@@ -858,6 +941,7 @@ const handleResourceClick = async (item) => {
 // 分类规则相关状态
 const sortingRules = ref([]);
 const showRuleModal = ref(false);
+const showRuleManagerModal = ref(false);
 const currentRule = ref({});
 
 // 选项数据
@@ -1144,11 +1228,21 @@ onMounted(async () => {
 }
 
 .sub-module {
-  background-color: rgba(128, 128, 128, 0.05);
+  background-color: rgba(128, 128, 128, 0.05); /* 半透明背景，深浅通用 */
   border: 1px solid rgba(128, 128, 128, 0.1);
   border-radius: 8px;
   padding: 16px;
   margin-top: 16px;
+}
+
+.organize-summary-box {
+  background-color: rgba(255, 255, 255, 0.05); /* 深色模式下微亮，浅色模式下微灰 */
+  border: 1px solid rgba(128, 128, 128, 0.1);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .sub-module-header {
@@ -1169,7 +1263,7 @@ onMounted(async () => {
   background-color: rgba(128, 128, 128, 0.03);
   border-radius: 8px;
   padding: 12px;
-  max-height: 400px;
+  max-height: 600px;
   overflow-y: auto;
   border: 1px solid rgba(128, 128, 128, 0.1);
 }
@@ -1340,21 +1434,31 @@ onMounted(async () => {
 
 .step-text { font-size: 14px; color: #ddd; }
 .rules-container {
-  background: #fafafa;
-  border: 1px solid #eee;
-  border-radius: 4px;
-  padding: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
 }
 .rule-item {
   display: flex;
   align-items: center;
-  background: #fff;
-  border: 1px solid #eee;
-  padding: 8px;
+  background-color: rgba(255, 255, 255, 0.02); /* 极淡的背景 */
+  border: 1px solid rgba(128, 128, 128, 0.1);
+  padding: 12px;
   margin-bottom: 8px;
-  border-radius: 4px;
+  border-radius: 6px;
+  transition: all 0.2s;
 }
-.drag-handle { cursor: move; color: #999; margin-right: 8px; }
+.rule-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-color: var(--n-primary-color);
+}
+.drag-handle { 
+  cursor: grab; 
+  color: #999; 
+  margin-right: 12px; 
+  padding: 4px;
+}
+.drag-handle:active { cursor: grabbing; }
 .rule-info { flex: 1; }
 .rule-name { font-weight: bold; font-size: 13px; }
 .rule-actions { display: flex; align-items: center; gap: 4px; }

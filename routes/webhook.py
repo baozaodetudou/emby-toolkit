@@ -28,6 +28,11 @@ from services.cover_generator import CoverGeneratorService
 from database import custom_collection_db, tmdb_collection_db, settings_db, user_db, maintenance_db, media_db, queries_db, watchlist_db
 from database.log_db import LogDBManager
 from handler.tmdb import get_movie_details, get_tv_details
+from handler.nullbr import SmartOrganizer, get_config
+try:
+    from p115client import P115Client
+except ImportError:
+    P115Client = None
 import logging
 logger = logging.getLogger(__name__)
 
@@ -523,7 +528,128 @@ def emby_webhook():
     # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
     # ★★★             魔法日志 - END             ★★★
     # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    event_type = data.get("Event") if data else "未知事件"
+    event_type = data.get("Event") # Emby
+    mp_event_type = data.get("type") # MP
+    # ======================================================================
+    # ★★★ 处理 MoviePilot transfer.complete 事件 ★★★
+    # ======================================================================
+    if mp_event_type == "transfer.complete":
+        # 1. 检查配置是否开启了智能整理
+        nb_config = get_config()
+        if not nb_config.get('enable_smart_organize', False):
+            logger.debug("  🚫 智能整理未开启，忽略 MP 通知。")
+            return jsonify({"status": "ignored_smart_organize_disabled"}), 200
+        else:
+            logger.info("  📥 收到 MoviePilot 上传完成通知，开始整理...")
+
+        # 2. 提取关键数据
+        try:
+            transfer_info = data.get("data", {}).get("transferinfo", {})
+            media_info = data.get("data", {}).get("mediainfo", {})
+            
+            # 115 文件 ID
+            target_item = transfer_info.get("target_item", {})
+            file_id = target_item.get("fileid")
+            
+            # 115 当前父目录 ID (MP 创建的目录)
+            target_dir = transfer_info.get("target_diritem", {})
+            current_cid = target_dir.get("fileid")
+            
+            # 元数据
+            tmdb_id = media_info.get("tmdb_id")
+            media_type_cn = media_info.get("type") # "电影" 或 "剧集"
+            title = media_info.get("title")
+            
+            if not file_id or not tmdb_id:
+                logger.warning("  ⚠️ MP 通知缺少 fileid 或 tmdb_id，无法处理。")
+                return jsonify({"status": "ignored_missing_data"}), 200
+
+            # 转换媒体类型
+            media_type = 'tv' if media_type_cn == '剧集' else 'movie'
+            
+            # 3. 初始化 115 客户端
+            if P115Client is None:
+                logger.error("  ❌ 未安装 p115client，无法执行操作。")
+                return jsonify({"status": "error_no_p115_client"}), 500
+                
+            cookies = nb_config.get('p115_cookies')
+            if not cookies:
+                logger.error("  ❌ 未配置 115 Cookies。")
+                return jsonify({"status": "error_no_cookies"}), 500
+                
+            client = P115Client(cookies)
+            
+            # 4. 初始化智能整理器
+            organizer = SmartOrganizer(client, tmdb_id, media_type, title)
+            
+            # 5. 计算目标分类 CID
+            target_cid = organizer.get_target_cid()
+            
+            if target_cid:
+                # 6. 执行仅移动操作
+                # 注意：这里我们只处理单文件。如果 MP 传输了多个文件（file_list），
+                # 理论上应该遍历 file_list_new 里的每个文件。
+                # 但 target_item 只给了一个。
+                # 观察日志，file_list_new 是个列表。
+                # 如果是多文件，建议遍历处理。
+                
+                # 增强：遍历 file_list_new 查找对应的 fileid
+                # 由于 MP Webhook 的 target_item 只给了最后一个或第一个文件的 ID，
+                # 如果是多文件（如剧集包），我们需要根据路径去查 ID，或者简单点，只处理 target_item。
+                # 鉴于 MP 整理通常是把它们放在同一个文件夹里，
+                # 我们其实可以把整个文件夹 (current_cid) 移动过去？
+                # 不行，我们的规则是 "分类目录/标准名/文件"，MP 是 "下载目录/标准名/文件"
+                # 如果我们直接移动文件夹： "下载目录/标准名" -> "分类目录/标准名"，这是最快的！
+                
+                # ★★★ 优化策略：直接移动 MP 创建的文件夹 ★★★
+                # MP 的 target_diritem 就是那个 "极限审判 (2026) {tmdb=...}" 文件夹
+                # 我们只需要把这个文件夹，移动到 target_cid 下即可！
+                # 这样连文件都不用遍历了，一次到位。
+                
+                if current_cid:
+                    logger.info(f"  🚀 [MP对接] 策略优化：直接移动文件夹 CID:{current_cid} -> 目标CID:{target_cid}")
+                    
+                    # 检查目标目录下是否已存在同名文件夹 (洗版情况)
+                    # 如果存在，115 move 会失败或者自动重命名？通常是失败或变成 "name(1)"
+                    # 所以最好先检查
+                    
+                    # 获取 MP 文件夹名
+                    dir_name = target_dir.get("name")
+                    
+                    # 检查目标是否存在
+                    exists = False
+                    try:
+                        search_res = client.fs_files({'cid': target_cid, 'search_value': dir_name, 'limit': 1})
+                        if search_res.get('data'):
+                            for item in search_res['data']:
+                                if item.get('n') == dir_name:
+                                    exists = True
+                                    # 如果已存在，我们需要把里面的文件移过去，然后删掉旧壳
+                                    # 这就变复杂了。
+                                    # 简单处理：如果已存在，改用 SmartOrganizer 的 execute_move_only (单文件移动)
+                                    break
+                    except: pass
+                    
+                    if not exists:
+                        # 不存在，直接移动文件夹 (最快)
+                        move_res = client.fs_move(current_cid, target_cid)
+                        if move_res.get('state'):
+                            logger.info("  ✅ [MP对接] 文件夹移动成功。")
+                            return jsonify({"status": "success_dir_moved"}), 200
+                        else:
+                            logger.warning(f"  ⚠️ [MP对接] 文件夹移动失败: {move_res}，尝试降级为文件移动模式。")
+                    
+                    # 如果文件夹移动失败（或已存在），回退到移动文件
+                    organizer.execute_move_only(file_id, current_cid, target_cid)
+                    return jsonify({"status": "success_file_moved"}), 200
+
+            else:
+                logger.info("  🚫 [MP对接] 未命中任何分类规则，保持原样。")
+                return jsonify({"status": "ignored_no_rule_match"}), 200
+
+        except Exception as e:
+            logger.error(f"  ❌ [MP对接] 处理失败: {e}", exc_info=True)
+            return jsonify({"status": "error", "message": str(e)}), 500
     logger.debug(f"  ➜ 收到Emby Webhook: {event_type}")
 
     USER_DATA_EVENTS = [
