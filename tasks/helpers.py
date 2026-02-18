@@ -493,7 +493,7 @@ def parse_full_asset_details(item_details: dict, id_to_parent_map: dict = None, 
     
     return asset
 
-# +++ 判断电影是否满足订阅条件 +++
+# --- 判断电影是否满足订阅条件 ---
 def is_movie_subscribable(movie_id: int, api_key: str, config: dict) -> bool:
     """
     检查一部电影是否适合订阅。
@@ -559,7 +559,7 @@ def is_movie_subscribable(movie_id: int, api_key: str, config: dict) -> bool:
     logger.warning(f"  ➜ 电影 {log_identifier} 未找到数字版或任何有效的影院上映日期，默认其不适合订阅。")
     return False
 
-# +++ 剧集完结状态检查 (共享逻辑) +++
+# --- 剧集完结状态检查 (共享逻辑) ---
 def check_series_completion(tmdb_id: int, api_key: str, season_number: Optional[int] = None, series_name: str = "未知剧集") -> bool:
     """
     检查剧集或特定季是否已完结。
@@ -826,7 +826,11 @@ def should_mark_as_pending(tmdb_id: int, season_number: int, api_key: str) -> tu
         logger.warning(f"检查待定条件失败: {e}")
         return False, 0
     
+# --- 计算祖先 ID 集合 ---
 def calculate_ancestor_ids(item_id: str, id_to_parent_map: dict, library_guid: str) -> List[str]:
+    """
+    计算一个条目的祖先 ID 集合，包含其直接父级、祖父级等所有上层 ID，直到根节点
+    """
     if not item_id or not id_to_parent_map:
         return []
 
@@ -1051,6 +1055,7 @@ def process_subscription_items_and_update_db(
     
     return processed_active_ids
 
+# --- 分级映射逻辑 ---
 def apply_rating_logic(metadata_skeleton: Dict[str, Any], tmdb_data: Dict[str, Any], item_type: str):
     """
     将 TMDb 的原始分级数据，经过配置的映射规则处理后，注入到元数据骨架中。

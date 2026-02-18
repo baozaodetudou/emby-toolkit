@@ -144,11 +144,65 @@
                 </n-form-item>
               </div>
 
+              <!-- 智能整理模块 -->
+              <div class="sub-module" style="border-left: 4px solid var(--n-warning-color);">
+                <div class="sub-module-header">
+                  <span class="title">整理入库 (可选)</span>
+                  <n-switch v-model:value="config.enable_smart_organize" size="small">
+                    <template #checked>开启</template>
+                    <template #unchecked>关闭</template>
+                  </n-switch>
+                </div>
+                
+                <n-collapse-transition :show="config.enable_smart_organize">
+                  <p style="font-size: 12px; color: #999; margin-bottom: 12px;">
+                    开启后，系统将接管整理权限，根据下方规则将资源移动到指定分类目录。规则从上到下依次匹配，一旦匹配成功将停止继续匹配后续规则。
+                    <br>未命中规则的资源将仅执行重命名，保留在默认保存目录。
+                  </p>
+                  
+                  <!-- 规则列表 -->
+                  <div class="rules-container">
+                    <!-- ★★★ 修复：确保 list 属性绑定正确 ★★★ -->
+                    <draggable 
+                      v-model="sortingRules" 
+                      item-key="id" 
+                      handle=".drag-handle" 
+                      @end="saveSortingRules"
+                      :animation="200"
+                    >
+                      <template #item="{ element: rule }">
+                        <div class="rule-item">
+                          <n-icon class="drag-handle" :component="DragHandleIcon" />
+                          <div class="rule-info">
+                            <div class="rule-name">{{ rule.name }}</div>
+                            <div class="rule-desc">
+                               <n-tag size="tiny" :bordered="false" type="info">CID: {{ rule.cid }}</n-tag>
+                               <span style="margin-left: 8px; font-size: 12px; color: #666;">{{ getRuleSummary(rule) }}</span>
+                            </div>
+                          </div>
+                          <div class="rule-actions">
+                            <n-switch v-model:value="rule.enabled" size="small" @update:value="saveSortingRules" />
+                            <n-button text size="small" @click="editRule(rule)"><n-icon :component="EditIcon" /></n-button>
+                            <n-button text size="small" type="error" @click="deleteRule(rule)"><n-icon :component="DeleteIcon" /></n-button>
+                          </div>
+                        </div>
+                      </template>
+                    </draggable>
+                    
+                    <n-empty v-if="sortingRules.length === 0" description="暂无规则，点击下方添加" style="margin: 10px 0;" />
+
+                    <n-button dashed block style="margin-top: 8px;" @click="addRule">
+                      <template #icon><n-icon :component="AddIcon" /></template>
+                      添加分类规则
+                    </n-button>
+                  </div>
+                </n-collapse-transition>
+              </div>
+
               <!-- CMS 模块 -->
               <div class="sub-module">
                 <div class="sub-module-header">
                   <span class="title">CMS 通知 (可选)</span>
-                  <n-tag size="small" :bordered="false">自动整理</n-tag>
                 </div>
                 <n-grid :cols="2" :x-gap="12">
                   <n-gi>
@@ -323,7 +377,7 @@
       </n-tab-pane>
     </n-tabs>
 
-    <!-- ★★★ 新增：季选择模态框 (从 DiscoverPage 复制并适配) ★★★ -->
+    <!-- 季选择模态框 -->
     <n-modal v-model:show="showSeasonModal" preset="card" title="选择要搜索的季" style="width: 400px; max-width: 90%;">
       <n-spin :show="loadingSeasons">
         <div v-if="seasonList.length === 0 && !loadingSeasons" style="text-align: center; color: #888; padding: 20px;">
@@ -453,6 +507,59 @@
 
       </n-card>
     </n-modal>
+    <!-- 分类规则 -->
+    <n-modal v-model:show="showRuleModal" preset="card" title="编辑分类规则" style="width: 650px;">
+      <n-form label-placement="left" label-width="100">
+        <n-form-item label="规则名称">
+          <n-input v-model:value="currentRule.name" placeholder="例如：漫威电影宇宙" />
+        </n-form-item>
+        <n-form-item label="目标 CID">
+          <n-input v-model:value="currentRule.cid" placeholder="115 文件夹 ID (例如: 12345678)" />
+          <template #feedback>请在 115 网页版进入文件夹，URL 最后的数字即为 CID</template>
+        </n-form-item>
+        
+        <n-divider title-placement="left" style="font-size: 12px; color: #999;">匹配条件 (满足所有勾选条件时命中)</n-divider>
+        
+        <n-form-item label="媒体类型">
+          <n-radio-group v-model:value="currentRule.media_type">
+            <n-radio-button value="all">不限</n-radio-button>
+            <n-radio-button value="movie">仅电影</n-radio-button>
+            <n-radio-button value="tv">仅剧集</n-radio-button>
+          </n-radio-group>
+        </n-form-item>
+
+        <n-form-item label="类型 (Genres)">
+          <n-select v-model:value="currentRule.genres" multiple filterable :options="genreOptions" placeholder="包含任一类型即可" />
+        </n-form-item>
+        
+        <n-form-item label="国家/地区">
+          <n-select v-model:value="currentRule.countries" multiple filterable :options="countryOptions" placeholder="包含任一国家即可" />
+        </n-form-item>
+
+        <n-form-item label="语言">
+          <n-select v-model:value="currentRule.languages" multiple filterable :options="languageOptions" placeholder="包含任一语言即可" />
+        </n-form-item>
+
+        <n-form-item label="工作室/平台">
+          <n-select v-model:value="currentRule.studios" multiple filterable :options="studioOptions" placeholder="包含任一工作室即可 (如: 漫威, Netflix)" />
+        </n-form-item>
+
+        <n-form-item label="关键词">
+           <n-select v-model:value="currentRule.keywords" multiple filterable tag :options="keywordOptions" placeholder="包含任一关键词即可 (如: 丧尸, 漫改)" />
+        </n-form-item>
+
+        <n-form-item label="分级">
+           <n-select v-model:value="currentRule.ratings" multiple filterable :options="ratingOptions" placeholder="包含任一分级即可 (如: 限制级)" />
+        </n-form-item>
+
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showRuleModal = false">取消</n-button>
+          <n-button type="primary" @click="confirmSaveRule">保存</n-button>
+        </n-space>
+      </template>
+    </n-modal>
     <!-- 资源选择弹窗 -->
     <NullbrSearchModal ref="nullbrModalRef" />
   </n-layout>
@@ -462,7 +569,6 @@
 import { ref, reactive, onMounted, h, defineComponent, computed } from 'vue';
 import axios from 'axios';
 import { useMessage, NIcon, NTag, NEllipsis, NSpace, NImage, NButton, NText, NDynamicInput, NTooltip, NCheckbox, NCheckboxGroup, NInputNumber, NSwitch, NSpin, NCollapseTransition, NTabs, NTabPane, NModal, NLayout, NLayoutSider, NLayoutContent, NPageHeader, NCard, NAlert, NForm, NFormItem, NGrid, NGi, NDivider, NInput, NInputGroup, NInputGroupLabel, NMenu, NEmpty, NProgress } from 'naive-ui';
-import { useClipboard } from '@vueuse/core';
 import NullbrSearchModal from './modals/NullbrSearchModal.vue';
 import { 
   SettingsOutline as SettingsIcon, 
@@ -477,9 +583,13 @@ import {
   CartOutline as CartIcon,
   CheckmarkCircleOutline as CheckIcon,
   CloseCircleOutline as CloseIcon,
-  PaperPlaneOutline as PaperPlaneIcon
+  PaperPlaneOutline as PaperPlaneIcon,
+  Menu as DragHandleIcon, 
+  CreateOutline as EditIcon, 
+  TrashOutline as DeleteIcon, 
+  Add as AddIcon
 } from '@vicons/ionicons5';
-
+import draggable from 'vuedraggable';
 const message = useMessage();
 
 // --- 配置相关 ---
@@ -745,6 +855,122 @@ const handleResourceClick = async (item) => {
   }
 };
 
+// 分类规则相关状态
+const sortingRules = ref([]);
+const showRuleModal = ref(false);
+const currentRule = ref({});
+
+// 选项数据
+const genreOptions = ref([]); 
+const countryOptions = ref([]); 
+const languageOptions = ref([]);
+const studioOptions = ref([]);
+const keywordOptions = ref([]);
+const ratingOptions = ref([]);
+
+// 加载规则
+const loadSortingRules = async () => {
+  try {
+    const res = await axios.get('/api/nullbr/sorting_rules');
+    let data = res.data;
+    
+    //以此为防线：如果 axios 自动解析没生效（极少见），或者后端返回了双重序列化的字符串
+    if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch(e) {}
+    }
+    
+    if (Array.isArray(data)) {
+        sortingRules.value = data;
+    } else {
+        sortingRules.value = [];
+    }
+  } catch (e) {
+      console.error("加载规则失败", e);
+      sortingRules.value = [];
+  }
+};
+
+// 保存规则
+const saveSortingRules = async () => {
+  try {
+    await axios.post('/api/nullbr/sorting_rules', sortingRules.value);
+  } catch (e) { message.error('保存规则失败'); }
+};
+
+const addRule = () => {
+  currentRule.value = { 
+    id: Date.now(), name: '', cid: '', enabled: true, 
+    media_type: 'all', genres: [], countries: [], languages: [], 
+    studios: [], keywords: [], ratings: []
+  };
+  showRuleModal.value = true;
+};
+
+const editRule = (rule) => {
+  currentRule.value = JSON.parse(JSON.stringify(rule));
+  showRuleModal.value = true;
+};
+
+const deleteRule = (rule) => {
+  sortingRules.value = sortingRules.value.filter(r => r.id !== rule.id);
+  saveSortingRules();
+};
+
+const confirmSaveRule = () => {
+  if (!currentRule.value.name || !currentRule.value.cid) {
+    message.error('名称和 CID 必填');
+    return;
+  }
+  const idx = sortingRules.value.findIndex(r => r.id === currentRule.value.id);
+  if (idx > -1) sortingRules.value[idx] = currentRule.value;
+  else sortingRules.value.push(currentRule.value);
+  
+  saveSortingRules();
+  showRuleModal.value = false;
+};
+
+const getRuleSummary = (rule) => {
+  const parts = [];
+  if (rule.media_type !== 'all') parts.push(rule.media_type === 'tv' ? '剧集' : '电影');
+  
+  // A. 直接显示中文的字段 (自定义集合)
+  if (rule.studios?.length) parts.push(`工作室:${rule.studios.join(',')}`);
+  if (rule.keywords?.length) parts.push(`关键词:${rule.keywords.join(',')}`);
+  if (rule.ratings?.length) parts.push(`分级:${rule.ratings.join(',')}`);
+
+  // B. 需要反查 Label 的字段 (存储的是 ID/Code)
+  
+  // 类型 (ID -> 中文)
+  if (rule.genres?.length) {
+      const names = rule.genres.map(id => {
+          // 注意：id 可能是数字或字符串，做个兼容比较
+          const opt = genreOptions.value.find(o => o.value == id);
+          return opt ? opt.label : id;
+      });
+      parts.push(`类型:${names.join(',')}`);
+  }
+  
+  // 国家 (Code -> 中文)
+  if (rule.countries?.length) {
+      const names = rule.countries.map(code => {
+          const opt = countryOptions.value.find(o => o.value === code);
+          return opt ? opt.label : code;
+      });
+      parts.push(`国家:${names.join(',')}`);
+  }
+  
+  // 语言 (Code -> 中文)
+  if (rule.languages?.length) {
+      const names = rule.languages.map(code => {
+          const opt = languageOptions.value.find(o => o.value === code);
+          return opt ? opt.label : code;
+      });
+      parts.push(`语言:${names.join(',')}`);
+  }
+  
+  return parts.join(' + ') || '无条件';
+};
+
 // ★★★ 新增：选中季后触发搜索 ★★★
 const selectSeasonAndSearch = (season) => {
   showSeasonModal.value = false;
@@ -796,9 +1022,45 @@ const selectPlan = (name, price) => {
   selectedPlanPrice.value = price;
 };
 
-onMounted(() => {
-  loadConfig();
-  loadPresets();
+onMounted(async () => {
+    loadConfig();
+    loadPresets();
+    loadSortingRules();
+    
+    try {
+        // ★★★ 修复 2: 类型选项的 value 改为 ID ★★★
+        const [mGenres, tGenres] = await Promise.all([
+             axios.get('/api/custom_collections/config/tmdb_movie_genres'),
+             axios.get('/api/custom_collections/config/tmdb_tv_genres')
+        ]);
+        
+        // 使用 Map 去重，键为 ID
+        const gMap = new Map();
+        // mGenres.data 结构: [{id: 28, name: '动作'}, ...]
+        [...(mGenres.data||[]), ...(tGenres.data||[])].forEach(g => {
+            if (g.id && g.name) gMap.set(g.id, g.name);
+        });
+        
+        // 生成选项: label=中文名, value=ID
+        genreOptions.value = Array.from(gMap.entries()).map(([id, name]) => ({ 
+            label: name, 
+            value: id 
+        }));
+
+        const cRes = await axios.get('/api/custom_collections/config/tmdb_countries');
+        countryOptions.value = cRes.data;
+        const lRes = await axios.get('/api/custom_collections/config/languages');
+        languageOptions.value = lRes.data;
+        const sRes = await axios.get('/api/custom_collections/config/studios');
+        studioOptions.value = sRes.data;
+        const kRes = await axios.get('/api/custom_collections/config/keywords');
+        keywordOptions.value = kRes.data;
+        const rRes = await axios.get('/api/custom_collections/config/unified_ratings_options');
+        ratingOptions.value = (rRes.data || []).map(r => ({ label: r, value: r }));
+
+    } catch (e) {
+        console.error("加载选项失败", e);
+    }
 });
 </script>
 
@@ -1032,4 +1294,23 @@ onMounted(() => {
 }
 
 .step-text { font-size: 14px; color: #ddd; }
+.rules-container {
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  padding: 8px;
+}
+.rule-item {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #eee;
+  padding: 8px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+}
+.drag-handle { cursor: move; color: #999; margin-right: 8px; }
+.rule-info { flex: 1; }
+.rule-name { font-weight: bold; font-size: 13px; }
+.rule-actions { display: flex; align-items: center; gap: 4px; }
 </style>

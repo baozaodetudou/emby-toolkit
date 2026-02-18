@@ -497,6 +497,354 @@ def fetch_resource_list(tmdb_id, media_type='movie', specific_source=None, seaso
     return final_filtered_list
 
 # ==============================================================================
+# ★★★ 智能整理核心逻辑 (Smart Organizer) ★★★
+# ==============================================================================
+
+class SmartOrganizer:
+    def __init__(self, client, tmdb_id, media_type, original_title):
+        self.client = client
+        self.tmdb_id = tmdb_id
+        self.media_type = media_type
+        self.original_title = original_title
+        self.api_key = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_TMDB_API_KEY)
+        
+        # 加载映射表 (用于工作室/关键词/分级的逻辑匹配)
+        self.studio_map = settings_db.get_setting('studio_mapping') or utils.DEFAULT_STUDIO_MAPPING
+        self.keyword_map = settings_db.get_setting('keyword_mapping') or utils.DEFAULT_KEYWORD_MAPPING
+        self.rating_map = settings_db.get_setting('rating_mapping') or utils.DEFAULT_RATING_MAPPING
+        self.rating_priority = settings_db.get_setting('rating_priority') or utils.DEFAULT_RATING_PRIORITY
+        
+        # 提取原始数据
+        self.raw_metadata = self._fetch_raw_metadata()
+        self.details = self.raw_metadata
+        self.rules = settings_db.get_setting('nullbr_sorting_rules') or []
+
+    def _fetch_raw_metadata(self):
+        """
+        获取 TMDb 原始元数据 (ID/Code)，不进行任何中文转换。
+        """
+        if not self.api_key: return {}
+        
+        data = {
+            'genre_ids': [], 
+            'country_codes': [], 
+            'lang_code': None, 
+            'company_ids': [], 
+            'network_ids': [],
+            'keyword_ids': [], 
+            'rating_label': '未知' # 分级是特例，必须计算出标签才能匹配
+        }
+
+        try:
+            raw_details = {}
+            if self.media_type == 'tv':
+                raw_details = tmdb.get_tv_details(
+                    self.tmdb_id, self.api_key, 
+                    append_to_response="keywords,content_ratings,networks"
+                )
+            else:
+                raw_details = tmdb.get_movie_details(
+                    self.tmdb_id, self.api_key, 
+                    append_to_response="keywords,release_dates"
+                )
+
+            if not raw_details: return {}
+
+            # 1. 基础 ID/Code 提取
+            data['genre_ids'] = [g.get('id') for g in raw_details.get('genres', [])]
+            data['country_codes'] = [c.get('iso_3166_1') for c in raw_details.get('production_countries', [])]
+            if not data['country_codes'] and raw_details.get('origin_country'):
+                data['country_codes'] = raw_details.get('origin_country')
+            
+            data['lang_code'] = raw_details.get('original_language')
+            
+            data['company_ids'] = [c.get('id') for c in raw_details.get('production_companies', [])]
+            data['network_ids'] = [n.get('id') for n in raw_details.get('networks', [])] if self.media_type == 'tv' else []
+
+            # 2. 关键词 ID 提取
+            kw_container = raw_details.get('keywords', {})
+            raw_kw_list = kw_container.get('keywords', []) if self.media_type == 'movie' else kw_container.get('results', [])
+            data['keyword_ids'] = [k.get('id') for k in raw_kw_list]
+
+            # 3. 分级计算 (这是唯一需要预处理成 Label 的，因为它是抽象概念)
+            # ... (保留原有的分级计算逻辑，计算出 rating_label) ...
+            rating_code = None
+            rating_country = None
+            if self.media_type == 'tv':
+                results = raw_details.get('content_ratings', {}).get('results', [])
+                for country in self.rating_priority:
+                    if country == 'ORIGIN': continue 
+                    found = next((r['rating'] for r in results if r['iso_3166_1'] == country), None)
+                    if found:
+                        rating_code = found
+                        rating_country = country
+                        break
+            else:
+                results = raw_details.get('release_dates', {}).get('results', [])
+                for country in self.rating_priority:
+                    if country == 'ORIGIN': continue
+                    country_release = next((r for r in results if r['iso_3166_1'] == country), None)
+                    if country_release:
+                        cert = next((x['certification'] for x in country_release.get('release_dates', []) if x.get('certification')), None)
+                        if cert:
+                            rating_code = cert
+                            rating_country = country
+                            break
+            
+            if rating_code and rating_country:
+                country_map_list = self.rating_map.get(rating_country, [])
+                label_match = next((r['label'] for r in country_map_list if r['code'] == rating_code), None)
+                if label_match:
+                    data['rating_label'] = label_match
+
+            # 补充标题日期供重命名
+            data['title'] = raw_details.get('title') or raw_details.get('name')
+            data['date'] = raw_details.get('release_date') or raw_details.get('first_air_date')
+
+            return data
+
+        except Exception as e:
+            logger.warning(f"  ⚠️ [整理] 获取原始元数据失败: {e}", exc_info=True)
+            return {}
+
+    def _match_rule(self, rule):
+        """
+        规则匹配逻辑：
+        - 标准字段：直接比对 ID/Code
+        - 集合字段（工作室/关键词）：通过 Label 反查 Config 中的 ID 列表，再比对 TMDb ID
+        """
+        if not self.raw_metadata: return False
+        
+        # 1. 媒体类型
+        if rule.get('media_type') and rule['media_type'] != 'all':
+            if rule['media_type'] != self.media_type: return False
+
+        # 2. 类型 (Genres) - ID 匹配
+        if rule.get('genres'):
+            # rule['genres'] 存的是 ID 列表 (如 [16, 35])
+            # self.raw_metadata['genre_ids'] 是 TMDb ID 列表
+            # 只要有一个交集就算命中
+            rule_ids = [int(x) for x in rule['genres']]
+            if not any(gid in self.raw_metadata['genre_ids'] for gid in rule_ids): return False
+
+        # 3. 国家 (Countries) - Code 匹配
+        if rule.get('countries'):
+            # rule['countries'] 存的是 Code (如 ['US', 'CN'])
+            if not any(c in self.raw_metadata['country_codes'] for c in rule['countries']): return False
+
+        # 4. 语言 (Languages) - Code 匹配
+        if rule.get('languages'):
+            if self.raw_metadata['lang_code'] not in rule['languages']: return False
+
+        # 5. 工作室 (Studios) - Label -> ID 匹配
+        if rule.get('studios'):
+            # rule['studios'] 存的是 Label (如 ['漫威', 'Netflix'])
+            # 我们需要遍历这些 Label，去 self.studio_map 里找对应的 ID
+            target_ids = set()
+            for label in rule['studios']:
+                # 找到配置项
+                config_item = next((item for item in self.studio_map if item['label'] == label), None)
+                if config_item:
+                    target_ids.update(config_item.get('company_ids', []))
+                    target_ids.update(config_item.get('network_ids', []))
+            
+            # 检查 TMDb 的 company/network ID 是否在 target_ids 中
+            has_company = any(cid in target_ids for cid in self.raw_metadata['company_ids'])
+            has_network = any(nid in target_ids for nid in self.raw_metadata['network_ids'])
+            
+            if not (has_company or has_network): return False
+            
+        # 6. 关键词 (Keywords) - Label -> ID 匹配
+        if rule.get('keywords'):
+            target_ids = set()
+            for label in rule['keywords']:
+                config_item = next((item for item in self.keyword_map if item['label'] == label), None)
+                if config_item:
+                    target_ids.update(config_item.get('ids', []))
+            
+            # 兼容字符串/数字 ID
+            tmdb_kw_ids = [int(k) for k in self.raw_metadata['keyword_ids']]
+            target_ids_int = [int(k) for k in target_ids]
+            
+            if not any(kid in target_ids_int for kid in tmdb_kw_ids): return False
+
+        # 7. 分级 (Rating) - Label 匹配
+        if rule.get('ratings'):
+            if self.raw_metadata['rating_label'] not in rule['ratings']: return False
+
+        return True
+
+    def get_target_cid(self):
+        """遍历规则，返回命中的 CID。未命中返回 None"""
+        for rule in self.rules:
+            if not rule.get('enabled', True): continue
+            if self._match_rule(rule):
+                logger.info(f"  🎯 [整理] 命中规则: {rule.get('name')} -> CID: {rule.get('cid')}")
+                return rule.get('cid')
+        return None
+
+    def _extract_video_info(self, filename):
+        """从文件名提取视频信息 (分辨率, 来源, 编码, HDR)"""
+        info = []
+        name_upper = filename.upper()
+        
+        # 分辨率
+        if '2160P' in name_upper or '4K' in name_upper: info.append('2160p')
+        elif '1080P' in name_upper: info.append('1080p')
+        elif '720P' in name_upper: info.append('720p')
+        
+        # 来源/质量
+        if 'REMUX' in name_upper: info.append('Remux')
+        elif 'BLURAY' in name_upper or 'BLU-RAY' in name_upper: info.append('BluRay')
+        elif 'WEB-DL' in name_upper or 'WEBDL' in name_upper: info.append('WEB-DL')
+        elif 'HDTV' in name_upper: info.append('HDTV')
+        
+        # 编码
+        if 'H265' in name_upper or 'HEVC' in name_upper or 'X265' in name_upper: info.append('HEVC')
+        elif 'H264' in name_upper or 'AVC' in name_upper or 'X264' in name_upper: info.append('AVC')
+
+        # 特效
+        if 'HDR' in name_upper: info.append('HDR')
+        if 'DOLBY' in name_upper or 'DOVI' in name_upper or 'DV' in name_upper: info.append('DV')
+        
+        return " - ".join(info) if info else ""
+
+    def _rename_file_node(self, file_node, new_base_name, is_tv=False):
+        """重命名单个文件节点"""
+        ext = file_node.get('n', '').split('.')[-1]
+        original_name = file_node.get('n', '')
+        
+        video_info = self._extract_video_info(original_name)
+        suffix = f" - {video_info}" if video_info else ""
+        
+        if is_tv:
+            # 剧集：尝试提取 SxxExx
+            # 匹配 S01E01, S1E1, Ep01, 第01集
+            pattern = r'(?:s|S)(\d{1,2})(?:e|E)(\d{1,2})|Ep?(\d{1,2})|第(\d{1,3})[集话]'
+            match = re.search(pattern, original_name)
+            if match:
+                s, e, ep_only, zh_ep = match.groups()
+                season_num = int(s) if s else 1
+                episode_num = int(e) if e else (int(ep_only) if ep_only else int(zh_ep))
+                
+                # 格式化为 S01E01
+                s_str = f"S{season_num:02d}"
+                e_str = f"E{episode_num:02d}"
+                new_name = f"{new_base_name} {s_str}{e_str}{suffix}.{ext}"
+                
+                return new_name, season_num
+            else:
+                # 没匹配到集数，不改名
+                return original_name, None
+        else:
+            # 电影
+            new_name = f"{new_base_name}{suffix}.{ext}"
+            return new_name, None
+
+    def execute(self, root_item, target_cid):
+        """执行整理：重命名 + 移动 + 清理垃圾"""
+        # 1. 准备标准名称
+        title = self.details.get('title') or self.original_title
+        date_str = self.details.get('date') or ''
+        year = date_str[:4] if date_str else ''
+        
+        # 替换非法字符
+        safe_title = re.sub(r'[\\/:*?"<>|]', '', title).strip()
+        std_root_name = f"{safe_title} ({year}) {{tmdb-{self.tmdb_id}}}" if year else f"{safe_title} {{tmdb-{self.tmdb_id}}}"
+        
+        # 2. 重命名根节点 (文件夹或单文件)
+        root_id = root_item.get('fid') or root_item.get('cid')
+        is_folder = (root_item.get('ico') == 'folder') or (not root_item.get('fid'))
+        
+        logger.info(f"  🛠️ [整理] 重命名根节点: {root_item.get('n')} -> {std_root_name}")
+        self.client.fs_rename((root_id, std_root_name))
+        
+        # 3. 如果是文件夹，进入内部处理 (重命名视频文件 + 剧集归类 + 垃圾清理)
+        if is_folder:
+            # 获取文件夹内所有文件
+            files_res = self.client.fs_files({'cid': root_id, 'limit': 1000})
+            if files_res.get('data'):
+                season_folders_cache = {} # { season_num: folder_cid }
+                
+                # 定义白名单后缀 (视频 + 字幕)
+                video_exts = ['mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts']
+                sub_exts = ['srt', 'ass', 'ssa', 'sub', 'vtt', 'sup']
+                
+                for sub_file in files_res['data']:
+                    fid = sub_file.get('fid')
+                    if not fid: continue # 忽略子文件夹，只处理文件
+                    
+                    file_name = sub_file.get('n', '')
+                    # 115返回的 ico 字段通常就是后缀，但有时候不准，用文件名后缀更稳
+                    ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
+                    
+                    # --- A. 垃圾清理逻辑 ---
+                    is_video = ext in video_exts
+                    is_sub = ext in sub_exts
+                    
+                    # 如果既不是视频也不是字幕，直接删除
+                    if not (is_video or is_sub):
+                        logger.info(f"  🗑️ [整理] 删除垃圾文件: {file_name}")
+                        self.client.fs_delete([fid])
+                        continue
+                        
+                    # 额外检查：如果是视频文件但极小 (<100MB)，视为 Sample/广告，删除
+                    # size 字段是字符串 "622.05KB"，需要解析。这里简单判断，如果单位是 KB/MB 且数值小
+                    if is_video:
+                        size_str = str(sub_file.get('size', '')).upper()
+                        if 'KB' in size_str: # KB 级别的视频肯定是垃圾
+                            logger.info(f"  🗑️ [整理] 删除过小视频(Sample): {file_name}")
+                            self.client.fs_delete([fid])
+                            continue
+                        # MB 级别稍微复杂点，暂不误删，保留
+                    
+                    # --- B. 视频文件重命名 ---
+                    if is_video:
+                        new_filename, season_num = self._rename_file_node(sub_file, safe_title, is_tv=(self.media_type=='tv'))
+                        
+                        # 执行文件重命名
+                        if new_filename != file_name:
+                            self.client.fs_rename((fid, new_filename))
+                        
+                        # 剧集：移动到 Season 目录
+                        if self.media_type == 'tv' and season_num is not None:
+                            s_folder_cid = season_folders_cache.get(season_num)
+                            if not s_folder_cid:
+                                # 检查或创建 Season XX 目录
+                                s_name = f"Season {season_num:02d}"
+                                # 先在当前目录下找
+                                found = False
+                                for existing in files_res['data']:
+                                    if existing.get('n') == s_name and existing.get('cid'):
+                                        s_folder_cid = existing.get('cid')
+                                        found = True
+                                        break
+                                if not found:
+                                    # 创建
+                                    mk_res = self.client.fs_mkdir(s_name, root_id)
+                                    if mk_res.get('state'):
+                                        s_folder_cid = mk_res.get('cid')
+                                
+                                if s_folder_cid:
+                                    season_folders_cache[season_num] = s_folder_cid
+                            
+                            # 移动文件到季目录
+                            if s_folder_cid:
+                                self.client.fs_move(fid, s_folder_cid)
+                    
+                    # --- C. 字幕文件重命名 (简单跟随视频名，或者保留原名) ---
+                    # 字幕重命名比较复杂，因为要匹配对应的视频。
+                    # 简单策略：如果只有一个视频，字幕改成视频同名。
+                    # 复杂策略暂不实现，保留原名，只做保留不删除。
+
+        # 4. 整体移动到目标 CID
+        if target_cid and str(target_cid) != '0':
+            logger.info(f"  🚚 [整理] 移动到分类目录 CID: {target_cid}")
+            self.client.fs_move(root_id, target_cid)
+        
+        return True
+
+# ==============================================================================
 # ★★★ 115 推送逻辑  ★★★
 # ==============================================================================
 
@@ -517,26 +865,37 @@ def _clean_link(link):
 def notify_cms_scan():
     """
     通知 CMS 执行目录整理 (生成 strm)
-    接口: /api/sync/lift_by_token?type=auto_organize&token=...
     """
     config = get_config()
     cms_url = config.get('cms_url')
     cms_token = config.get('cms_token')
 
     if not cms_url or not cms_token:
-        # 用户没配置 CMS，直接忽略，不报错
         return
 
     cms_url = cms_url.rstrip('/')
-    # 构造通知接口 URL
-    api_url = f"{cms_url}/api/sync/lift_by_token"
-    params = {
-        "type": "auto_organize",
-        "token": cms_token
-    }
+    
+    # ★★★ 核心修改：根据是否启用智能整理，选择不同的接口 ★★★
+    enable_smart_organize = config.get('enable_smart_organize', False)
+    
+    if enable_smart_organize:
+        # 智能整理模式：文件已归位，执行增量同步 (lift_sync)
+        api_url = f"{cms_url}/api/sync/lift_by_token"
+        params = {
+            "type": "lift_sync",
+            "token": cms_token
+        }
+        logger.info(f"  ➜ [CMS] 通知 CMS 执行增量同步 ...")
+    else:
+        # 默认模式：文件在下载目录，执行自动整理 (auto_organize)
+        api_url = f"{cms_url}/api/sync/lift_by_token"
+        params = {
+            "type": "auto_organize",
+            "token": cms_token
+        }
+        logger.info(f"  ➜ [CMS] 通知 CMS 执行自动整理 ...")
 
     try:
-        logger.info(f"  ➜ 正在通知 CMS 执行整理...")
         response = requests.get(api_url, params=params, timeout=5)
         response.raise_for_status()
         
@@ -548,7 +907,7 @@ def notify_cms_scan():
 
     except Exception as e:
         logger.warning(f"  ⚠️ CMS 通知发送失败: {e}")
-        raise e
+        # 不抛出异常，以免影响主流程
 
 def _standardize_115_file(client, file_item, save_cid, raw_title, tmdb_id, media_type='movie'):
     """
@@ -647,7 +1006,7 @@ def _standardize_115_file(client, file_item, save_cid, raw_title, tmdb_id, media
 def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     """
     智能推送：支持 115/115cdn/anxia 转存 和 磁力离线
-    并执行 TMDb ID 标准化重命名
+    并执行 智能整理 (Smart Organize)
     """
     if P115Client is None:
         raise ImportError("未安装 p115 库")
@@ -655,6 +1014,7 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     config = get_config()
     cookies = config.get('p115_cookies')
     
+    # 默认保存路径 (中转站)
     try:
         cid_val = config.get('p115_save_path_cid', 0)
         save_path_cid = int(cid_val) if cid_val else 0
@@ -670,32 +1030,30 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     client = P115Client(cookies)
     
     # ==================================================
-    # ★★★ 步骤 1: 建立目录快照 (优化版) ★★★
+    # ★★★ 步骤 1: 建立目录快照 (用于捕获新文件) ★★★
     # ==================================================
     existing_ids = set()
     try:
+        # 扫描前50个文件即可，通常新文件在最前
         files_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
         if files_res.get('data'):
             for item in files_res['data']:
-                # 关键修改：文件夹取 cid，文件取 fid
-                # 如果是文件夹，n == cid (通常 115 文件夹的 fid 也是存在的，但取两者之和最稳)
                 item_id = item.get('fid') or item.get('cid') 
-                if item_id:
-                    existing_ids.add(str(item_id)) # 转为字符串防止类型不一
+                if item_id: existing_ids.add(str(item_id))
     except Exception as e:
         logger.warning(f"  ⚠️ 获取目录快照失败: {e}")
 
     # ==================================================
     # ★★★ 步骤 2: 执行任务 (转存 或 离线) ★★★
     # ==================================================
+    # ... (这部分代码保持不变，负责调用 115 API 添加任务) ...
     target_domains = ['115.com', '115cdn.com', 'anxia.com']
     is_115_share = any(d in clean_url for d in target_domains) and ('magnet' not in clean_url)
-    
     task_success = False
     
     try:
         if is_115_share:
-            # --- 115 分享链接转存 ---
+            # ... (115 分享转存逻辑，保持不变) ...
             logger.info(f"  ➜ [NULLBR] 识别为 115 转存任务 -> CID: {save_path_cid}")
             share_code = None
             match = re.search(r'/s/([a-z0-9]+)', clean_url)
@@ -713,7 +1071,6 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
             elif hasattr(client, 'share_import'):
                 resp = client.share_import(share_code, receive_code, save_path_cid)
             else:
-                # Fallback API
                 api_url = "https://webapi.115.com/share/receive"
                 payload = {'share_code': share_code, 'receive_code': receive_code, 'cid': save_path_cid}
                 r = client.request(api_url, method='POST', data=payload)
@@ -725,16 +1082,13 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
             else:
                 err = resp.get('error_msg') or resp.get('msg') or str(resp)
                 raise Exception(f"转存失败: {err}")
-
         else:
-            # --- 磁力/Ed2k 离线下载 ---
+            # ... (磁力离线逻辑，保持不变) ...
             logger.info(f"  ➜ [NULLBR] 识别为磁力/离线任务 -> CID: {save_path_cid}")
             payload = {'url[0]': clean_url, 'wp_path_id': save_path_cid}
             resp = client.offline_add_urls(payload)
-            
             if resp.get('state'):
                 task_success = True
-                # 离线任务需要等待
                 logger.info(f"  ➜ [NULLBR] 任务已提交，等待文件生成...")
             else:
                 err = resp.get('error_msg') or resp.get('msg') or '未知错误'
@@ -743,16 +1097,15 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
                     logger.info(f"  ✅ 任务已存在")
                 else:
                     raise Exception(f"离线失败: {err}")
-
     except Exception as e:
         raise e
 
     # ==================================================
-    # ★★★ 步骤 3: 扫描新文件并重命名 ★★★
+    # ★★★ 步骤 3: 扫描新文件并执行智能整理 ★★★
     # ==================================================
     if task_success:
-        # 轮询查找新文件 (最多等待 15秒)
-        max_retries = 5
+        # 轮询查找新文件
+        max_retries = 8 # 稍微增加重试次数
         found_item = None
         
         for i in range(max_retries):
@@ -761,7 +1114,6 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
                 check_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
                 if check_res.get('data'):
                     for item in check_res['data']:
-                        # 关键修改：同时检查 fid 和 cid
                         current_id = item.get('fid') or item.get('cid')
                         if current_id and (str(current_id) not in existing_ids):
                             found_item = item
@@ -775,22 +1127,38 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
             item_name = found_item.get('n', '未知')
             logger.info(f"  ✅ 捕获到新入库项目: {item_name}")
             
-            # ★★★ 执行重命名 ★★★
+            # ★★★ 核心修改：调用智能整理 ★★★
             if tmdb_id:
-                _standardize_115_file(client, found_item, save_path_cid, title, tmdb_id)
+                try:
+                    # 检查是否开启了整理功能
+                    enable_organize = config.get('enable_smart_organize', False)
+                    
+                    if enable_organize:
+                        logger.info("  🧠 [整理] 智能整理已开启，开始分析...")
+                        organizer = SmartOrganizer(client, tmdb_id, media_type, title)
+                        target_cid = organizer.get_target_cid()
+                        
+                        # 无论是否命中规则，只要开启了整理，就执行重命名
+                        # 如果没命中规则，target_cid 为 None，则只重命名不移动
+                        organizer.execute(found_item, target_cid)
+                    else:
+                        # 旧逻辑：仅简单重命名
+                        _standardize_115_file(client, found_item, save_path_cid, title, tmdb_id, media_type)
+                        
+                except Exception as e:
+                    logger.error(f"  ❌ [整理] 智能整理执行失败: {e}", exc_info=True)
             else:
-                logger.debug("  ⚠️ 未提供 TMDb ID，跳过重命名")
+                logger.debug("  ⚠️ 未提供 TMDb ID，跳过整理")
             
             return True
         else:
             if is_115_share:
-                # 分享转存通常很快，如果没找到可能是因为文件已存在没产生新ID，或者转存到了子文件夹
                 logger.warning("  ⚠️ 转存显示成功但未捕获到新文件ID (可能文件已存在)")
                 return True
             else:
-                # 离线下载超时
                 logger.warning("  ❌ 离线任务超时，未在目录发现新文件 (死链或下载过慢)")
-                raise Exception("资源下载超时或死链")
+                # 磁力链可能需要很久，这里不报错，只是无法执行整理
+                return True
 
     return False
 

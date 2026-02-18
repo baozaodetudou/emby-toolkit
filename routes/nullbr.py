@@ -1,5 +1,7 @@
 # routes/nullbr.py
 import logging
+import json
+from time import time
 from flask import Blueprint, jsonify, request
 from extensions import admin_required
 from database import settings_db
@@ -29,7 +31,7 @@ def handle_config():
         
         if 'p115_cookies' not in config: config['p115_cookies'] = ''
         if 'p115_save_path_cid' not in config: config['p115_save_path_cid'] = 0
-            
+        if 'enable_smart_organize' not in config: config['enable_smart_organize'] = False
         return jsonify(config)
     
     if request.method == 'POST':
@@ -41,7 +43,7 @@ def handle_config():
             "p115_cookies": data.get('p115_cookies', '').strip(),
             "p115_save_path_cid": data.get('p115_save_path_cid', 0),
             "filters": data.get('filters', {}),
-            # 移除了 daily_limit 和 request_interval 的保存
+            "enable_smart_organize": data.get('enable_smart_organize', False),
             "enabled_sources": data.get('enabled_sources', ['115', 'magnet', 'ed2k']),
             "updated_at": "now"
         }
@@ -154,3 +156,38 @@ def get_115_status():
         return jsonify({"status": "success", "data": info})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+    
+@nullbr_bp.route('/sorting_rules', methods=['GET', 'POST'])
+@admin_required
+def handle_sorting_rules():
+    if request.method == 'GET':
+        # 从数据库获取
+        raw_rules = settings_db.get_setting('nullbr_sorting_rules')
+        
+        rules = []
+        if raw_rules:
+            if isinstance(raw_rules, list):
+                rules = raw_rules
+            elif isinstance(raw_rules, str):
+                try:
+                    # 尝试解析 JSON 字符串
+                    parsed = json.loads(raw_rules)
+                    if isinstance(parsed, list):
+                        rules = parsed
+                except Exception as e:
+                    logger.error(f"解析分类规则 JSON 失败: {e}")
+        
+        # 确保每个规则都有 id (前端 key 需要)
+        for r in rules:
+            if 'id' not in r:
+                r['id'] = str(int(time.time() * 1000))
+                
+        return jsonify(rules)
+    
+    if request.method == 'POST':
+        rules = request.json
+        # 确保保存的是列表对象，settings_db 内部会处理序列化
+        if not isinstance(rules, list):
+            rules = []
+        settings_db.save_setting('nullbr_sorting_rules', rules)
+        return jsonify({"status": "success", "message": "整理规则已保存"})
