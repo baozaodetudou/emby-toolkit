@@ -784,7 +784,7 @@ class SmartOrganizer:
 
         # 4. 编码 (Codec)
         codec = ""
-        if re.search(r'[HX]265|HEVC', name_upper): info_tags.append('X265')
+        if re.search(r'[HX]265|HEVC', name_upper): info_tags.append('x265')
         elif re.search(r'[HX]264|AVC', name_upper): info_tags.append('H264')
         elif re.search(r'AV1', name_upper): info_tags.append('AV1')
         elif re.search(r'MPEG-?2', name_upper): info_tags.append('MPEG2')
@@ -1056,17 +1056,26 @@ class SmartOrganizer:
                 final_home_cid = mk_res.get('cid')
                 logger.info(f"  🆕 创建新目录: {std_root_name}")
             else:
-                # 策略 3: 创建失败 (可能并发或缓存延迟)，再次尝试查找
-                logger.warning(f"  ⚠️ 创建目录失败 (可能已存在)，尝试二次查找: {std_root_name}")
-                time.sleep(1) # 稍等一下让115缓存刷新
+                # 策略 3: 创建失败 (可能已存在且沉底)，再次尝试查找
+                logger.warning(f"  ⚠️ 目录创建失败(可能已存在且沉底)，尝试深度查找: {std_root_name}")
+                
+                time.sleep(0.5) # 稍微缓一下，防止并发过快
+                
                 try:
-                    search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 20})
-                    if search_res.get('data'):
-                        for item in search_res['data']:
-                            if item.get('n') == std_root_name and not item.get('fid'):
+                    deep_search_res = self.client.fs_files({
+                        'cid': dest_parent_cid, 
+                        'search_value': std_root_name, 
+                        'limit': 1000, 
+                    })
+                    
+                    if deep_search_res.get('data'):
+                        for item in deep_search_res['data']:
+                            if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
                                 final_home_cid = item.get('cid')
+                                logger.info(f"  📂 [深度查找] 找回沉底目录: {std_root_name}")
                                 break
-                except: pass
+                except Exception as e:
+                    logger.warning(f"  ⚠️ 深度查找异常: {e}")
         
         if not final_home_cid:
             logger.error(f"  ❌ 无法创建或找到目标标准文件夹 [{std_root_name}]，整理终止。")
