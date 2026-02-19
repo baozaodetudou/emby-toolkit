@@ -1207,15 +1207,8 @@ class SmartOrganizer:
         # 3. 目标不存在 -> 执行乾坤大挪移
         logger.info(f"  🚀 [115] 目标不存在，执行整目录移动: {root_item.get('name')} -> {dest_parent_cid}")
         
-        # 3.1 先重命名 MP 的文件夹为标准名称
-        # if root_item.get('n') != std_root_name:
-        #     rename_res = self.client.fs_rename((source_cid, std_root_name))
-        #     if not rename_res.get('state'):
-        #         logger.error(f"  ❌ 重命名失败，转入合并模式")
-        #         return False
-        
         # 3.2 移动整个文件夹到分类目录
-        move_res = self.client.fs_move(source_cid, dest_parent_cid)
+        move_res = self.client.fs_move(source_cid, pid=dest_parent_cid)
         if move_res.get('state'):
             logger.info(f"  ✅ [整理] 整目录移动成功！")
             return True
