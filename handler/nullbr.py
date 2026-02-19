@@ -759,23 +759,19 @@ class SmartOrganizer:
         elif re.search(r'DVD', name_upper): source = 'DVD'
         
         # ★★★ 修复：UHD 识别 ★★★
-        # 如果有 UHD，通常意味着 4K BluRay，可以追加显示
         if 'UHD' in name_upper:
             if source == 'BluRay': source = 'UHD BluRay'
             elif not source: source = 'UHD'
 
         # 2. 特效 (Effect: HDR/DV)
         effect = ""
-        # ★★★ 修复：DoVi 识别 (放宽边界限制，支持 .DoVi. 这种格式) ★★★
-        # 使用非单词字符作为边界，或者直接匹配
         is_dv = re.search(r'(?:^|[\.\s\-\_])(DV|DOVI|DOLBY\s?VISION)(?:$|[\.\s\-\_])', name_upper)
         is_hdr = re.search(r'(?:^|[\.\s\-\_])(HDR|HDR10\+?)(?:$|[\.\s\-\_])', name_upper)
         
-        if is_dv and is_hdr: effect = "HDR DV" # 组合显示
+        if is_dv and is_hdr: effect = "HDR DV"
         elif is_dv: effect = "DV"
         elif is_hdr: effect = "HDR"
         
-        # 组合 Source 和 Effect
         if source:
             info_tags.append(f"{source} {effect}".strip())
         elif effect:
@@ -812,44 +808,32 @@ class SmartOrganizer:
         if audio_info:
             info_tags.append(" ".join(audio_info))
 
-        # 6. 发布组 (Release Group) - 调用 helpers.RELEASE_GROUPS
-        # 逻辑：遍历所有正则，如果匹配到，提取文件名中的原始字符串
-        group_found = False
-        for group_key, patterns in utils.RELEASE_GROUPS.items() if hasattr(utils, 'RELEASE_GROUPS') else {}.items():
-             # 注意：这里假设 helpers 被 import 为 utils 或者 helpers，根据文件头 import 情况调整
-             # 原文件 import utils, 但 RELEASE_GROUPS 在 helpers.py。
-             # 如果 nullbr.py 没有 import helpers，需要确保能访问到。
-             # 假设 helpers.py 的内容在 helpers 模块中，或者被 utils 引用。
-             # 既然你提供了 helpers.py，且 nullbr.py 头部没有 import helpers，
-             # **请确保在 nullbr.py 头部添加: import handler.helpers as helpers 或 from tasks import helpers**
-             pass
+        # ★★★ 新增：流媒体平台识别 (解决 NF 丢失问题) ★★★
+        # 匹配 NF, AMZN, DSNP, HMAX, HULU, NETFLIX, DISNEY+, APPLETV+
+        stream_match = re.search(r'\b(NF|AMZN|DSNP|HMAX|HULU|NETFLIX|DISNEY\+|APPLETV\+|B-GLOBAL)\b', name_upper)
+        if stream_match:
+            info_tags.append(stream_match.group(1))
 
-        # 修正：直接使用 helpers 模块 (需要在文件头 import tasks.helpers as helpers)
-        # 考虑到原文件结构，这里尝试从 helpers 匹配
+        # 6. 发布组 (Release Group)
+        group_found = False
         try:
-            from tasks import helpers # 延迟导入防止循环引用，或者放在文件头
+            from tasks import helpers 
             for group_name, patterns in helpers.RELEASE_GROUPS.items():
                 for pattern in patterns:
                     try:
-                        # 使用正则查找文件名中的组名
                         match = re.search(pattern, filename, re.IGNORECASE)
                         if match:
-                            # 匹配到了，保留文件名中的原始写法 (match.group(0))
                             info_tags.append(match.group(0))
                             group_found = True
                             break
                     except: pass
                 if group_found: break
             
-            # 如果没在字典里找到，尝试匹配常见的 -Group 结尾
             if not group_found:
-                # 匹配文件名末尾的 -Group (如 -CMCT.mkv)
-                # 去掉扩展名
                 name_no_ext = os.path.splitext(filename)[0]
                 match_suffix = re.search(r'-([a-zA-Z0-9]+)$', name_no_ext)
                 if match_suffix:
                     possible_group = match_suffix.group(1)
-                    # 排除常见非组名后缀
                     if len(possible_group) > 2 and possible_group.upper() not in ['1080P', '2160P', '4K', 'HDR', 'H265', 'H264']:
                         info_tags.append(possible_group)
         except ImportError:
@@ -1184,123 +1168,6 @@ class SmartOrganizer:
         logger.info(f"  ✅ [整理] 完成。共迁移 {moved_count} 个文件。")
         return True
     
-    def execute_move_only(self, file_id, current_cid, target_cid, file_name=None):
-        """
-        [MP 对接专用] 仅执行移动操作，不重命名。
-        用于处理 MoviePilot 已经整理好的文件，将其归类到指定目录。
-        修复：支持自动归类到 Season XX 子目录
-        """
-        if not target_cid or str(target_cid) == '0':
-            logger.info("  ⚠️ [MP对接] 未命中分类规则或目标CID为0，跳过移动。")
-            return False
-
-        # 1. 准备标准名称 (剧集/电影 根文件夹名)
-        title = self.details.get('title') or self.original_title
-        date_str = self.details.get('date') or ''
-        year = date_str[:4] if date_str else ''
-        safe_title = re.sub(r'[\\/:*?"<>|]', '', title).strip()
-        std_root_name = f"{safe_title} ({year}) {{tmdb={self.tmdb_id}}}" if year else f"{safe_title} {{tmdb={self.tmdb_id}}}"
-
-        logger.info(f"  🚀 [MP上传] 开始归类移动: FileID:{file_id} -> CID:{target_cid}/{std_root_name}")
-
-        # 2. 获取或创建目标标准文件夹 (在目标分类CID下，例如“华语剧”目录下)
-        final_home_cid = None
-        
-        # 策略 1: 查找剧集根目录
-        # ★★★ 修复：移除 pid 校验，因为根目录名包含 TMDb ID 是全局唯一的，可以直接搜 ★★★
-        try:
-            search_res = self.client.fs_files({'cid': target_cid, 'search_value': std_root_name, 'limit': 1})
-            if search_res.get('data'):
-                for item in search_res['data']:
-                    if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
-                        final_home_cid = item.get('cid')
-                        break
-        except: pass
-
-        # 策略 2: 创建剧集根目录
-        if not final_home_cid:
-            mk_res = self.client.fs_mkdir(std_root_name, target_cid)
-            if mk_res.get('state'):
-                final_home_cid = mk_res.get('cid')
-            else:
-                # 再次尝试查找（防止并发创建导致的失败）
-                time.sleep(1)
-                try:
-                    search_res = self.client.fs_files({'cid': target_cid, 'search_value': std_root_name, 'limit': 1})
-                    if search_res.get('data'):
-                        for item in search_res['data']:
-                            if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
-                                final_home_cid = item.get('cid')
-                                break
-                except: pass
-        
-        if not final_home_cid:
-            logger.error(f"  ❌ [MP上传] 无法创建或找到剧集根目录 [{std_root_name}]，移动终止。")
-            return False
-
-        # ==================================================
-        # ★★★ 新增：季文件夹处理逻辑 ★★★
-        # ==================================================
-        dest_cid = final_home_cid # 默认移动到根目录
-
-        if self.media_type == 'tv' and file_name:
-            # 从文件名提取季号 S01, S1, 第1季
-            season_num = None
-            try:
-                # 匹配 S01, s1
-                match = re.search(r'(?:s|S)(\d{1,2})', file_name)
-                if match:
-                    season_num = int(match.group(1))
-                else:
-                    # 匹配 第1季
-                    match_zh = re.search(r'第(\d{1,2})季', file_name)
-                    if match_zh:
-                        season_num = int(match_zh.group(1))
-            except: pass
-
-            if season_num is not None:
-                season_folder_name = f"Season {season_num:02d}"
-                season_cid = None
-                
-                # 查找 Season 目录
-                # ★★★ 核心修复：使用目录遍历代替搜索，防止找到其他剧集的同名文件夹 ★★★
-                try:
-                    # 不使用 search_value，直接列出子目录
-                    s_res = self.client.fs_files({'cid': final_home_cid, 'limit': 100})
-                    if s_res.get('data'):
-                        for item in s_res['data']:
-                            if item.get('n') == season_folder_name and not item.get('fid'):
-                                season_cid = item.get('cid')
-                                break
-                except: pass
-
-                # 创建 Season 目录
-                if not season_cid:
-                    s_mk = self.client.fs_mkdir(season_folder_name, final_home_cid)
-                    if s_mk.get('state'):
-                        season_cid = s_mk.get('cid')
-                        logger.info(f"  wm [MP上传] 创建季目录: {season_folder_name}")
-                
-                if season_cid:
-                    dest_cid = season_cid # 更新目标为季目录
-                    logger.info(f"  📂 [MP上传] 识别到第 {season_num} 季，将存入: {season_folder_name}")
-
-        # 3. 移动文件
-        move_res = self.client.fs_move(file_id, dest_cid)
-        if move_res.get('state'):
-            logger.info(f"  ✅ [MP上传] 文件移动成功。")
-            
-            # 4. 尝试删除 MP留下的空文件夹 (current_cid)
-            # 只有当 current_cid 不是根目录时才删
-            if current_cid and str(current_cid) != '0':
-                try:
-                    self.client.fs_delete([current_cid])
-                except: pass
-            return True
-        else:
-            logger.error(f"  ❌ [MP上传] 文件移动失败: {move_res}")
-            return False
-
 # ==============================================================================
 # ★★★ 115 推送逻辑  ★★★
 # ==============================================================================

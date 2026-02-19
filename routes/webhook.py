@@ -540,7 +540,7 @@ def emby_webhook():
             logger.debug("  🚫 智能整理未开启，忽略 MP 通知。")
             return jsonify({"status": "ignored_smart_organize_disabled"}), 200
         else:
-            logger.info("  📥 收到 MoviePilot 上传完成通知，开始整理...")
+            logger.info("  📥 收到 MoviePilot 上传完成通知，开始接管整理...")
 
         # 2. 提取关键数据
         try:
@@ -550,11 +550,13 @@ def emby_webhook():
             # 115 文件 ID 和 文件名
             target_item = transfer_info.get("target_item", {})
             file_id = target_item.get("fileid")
-            file_name = target_item.get("name") # ★★★ 获取文件名用于解析季号 ★★★
+            file_name = target_item.get("name")
+            # 0: 文件夹, 1: 文件
+            item_type = target_item.get("type", 1) 
             
             # 115 当前父目录 ID (MP 创建的目录)
             target_dir = transfer_info.get("target_diritem", {})
-            current_cid = target_dir.get("fileid")
+            current_parent_cid = target_dir.get("fileid")
             
             # 元数据
             tmdb_id = media_info.get("tmdb_id")
@@ -587,11 +589,35 @@ def emby_webhook():
             target_cid = organizer.get_target_cid()
             
             if target_cid:
-                # ★★★ 传入 file_name ★★★
-                organizer.execute_move_only(file_id, current_cid, target_cid, file_name=file_name)
-                logger.info("  📣 [MP上传] 整理完成，通知 CMS 执行增量同步...")
-                notify_cms_scan()
-                return jsonify({"status": "success_file_moved"}), 200
+                # ★★★ 核心修改：构造 root_item 并调用 execute ★★★
+                # 我们把 MP 传过来的文件/文件夹伪装成 115 API 返回的 item 格式
+                # 这样 execute 就会把它当做扫描到的文件来处理：递归、重命名、移动、建季目录
+                
+                root_item = {
+                    'n': file_name,
+                    'cid': current_parent_cid # 父目录ID
+                }
+                
+                if item_type == 0:
+                    # 如果是文件夹 (MP上传的是打包目录)
+                    root_item['cid'] = file_id # 这里的 cid 是文件夹自己的 ID
+                    # 没有 fid 表示是文件夹
+                else:
+                    # 如果是单文件
+                    root_item['fid'] = file_id
+                    # cid 保持为父目录 ID
+                
+                logger.info(f"  🚀 [MP上传] 转交 SmartOrganizer.execute 处理: {file_name}")
+                
+                # 直接复用最稳的 execute 逻辑！
+                success = organizer.execute(root_item, target_cid)
+                
+                if success:
+                    logger.info("  📣 [MP上传] 整理完成，通知 CMS 执行增量同步...")
+                    notify_cms_scan()
+                    return jsonify({"status": "success_organized"}), 200
+                else:
+                    return jsonify({"status": "failed_organize"}), 500
 
             else:
                 logger.info("  🚫 [MP上传] 未命中任何分类规则，保持原样。")
