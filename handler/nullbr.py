@@ -1803,10 +1803,10 @@ def task_scan_and_organize_115(processor=None):
     - 识别成功 -> 归类到目标目录
     - 识别失败 -> 移动到 '未识别' 目录
     """
-    logger.info("=== 开始执行 115 待整理目录扫描 (增强版) ===")
+    logger.info("=== 开始执行 115 待整理目录扫描 ===")
     
     if P115Client is None:
-        logger.error("未安装 p115client，无法执行。")
+        logger.error("  ⚠️ 未安装 p115client，无法执行。")
         return
 
     config = get_config()
@@ -1815,13 +1815,13 @@ def task_scan_and_organize_115(processor=None):
     enable_organize = config.get('enable_smart_organize', False)
 
     if not cookies:
-        logger.error("未配置 115 Cookies，跳过。")
+        logger.error("  ⚠️ 未配置 115 Cookies，跳过。")
         return
     if not cid_val or str(cid_val) == '0':
-        logger.error("未配置待整理目录 (CID)，跳过。")
+        logger.error("  ⚠️ 未配置待整理目录 (CID)，跳过。")
         return
     if not enable_organize:
-        logger.warning("未开启智能整理开关，仅扫描不处理。")
+        logger.warning("  ⚠️ 未开启智能整理开关，仅扫描不处理。")
         return
 
     try:
@@ -1853,11 +1853,11 @@ def task_scan_and_organize_115(processor=None):
                 logger.warning(f"  ⚠️ 创建 '未识别' 目录失败: {e}")
 
         # 2. 扫描目录 (限制 50 个)
-        logger.info(f"正在扫描目录 CID: {save_cid} ...")
+        logger.info(f"  🔍 正在扫描目录 CID: {save_cid} ...")
         res = client.fs_files({'cid': save_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
         
         if not res.get('data'):
-            logger.info("待整理目录为空。")
+            logger.info("  📂 待整理目录为空。")
             return
 
         processed_count = 0
