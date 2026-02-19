@@ -1154,12 +1154,15 @@ class SmartOrganizer:
                     if s_mk.get('state'):
                         season_folders_cache[season_num] = s_mk.get('cid')
                     else:
-                        s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 10})
-                        if s_search.get('data'):
-                            for item in s_search['data']:
-                                if item.get('n') == s_name and not item.get('fid'):
-                                    season_folders_cache[season_num] = item.get('cid')
-                                    break
+                        # ★★★ 修复：使用目录遍历代替搜索，防止找到其他剧集的同名文件夹 ★★★
+                        try:
+                            s_search = self.client.fs_files({'cid': final_home_cid, 'limit': 100})
+                            if s_search.get('data'):
+                                for item in s_search['data']:
+                                    if item.get('n') == s_name and not item.get('fid'):
+                                        season_folders_cache[season_num] = item.get('cid')
+                                        break
+                        except: pass
                 
                 if season_folders_cache.get(season_num):
                     target_folder_cid = season_folders_cache[season_num]
@@ -1212,8 +1215,10 @@ class SmartOrganizer:
             if search_res.get('data'):
                 for item in search_res['data']:
                     if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
-                        final_home_cid = item.get('cid')
-                        break
+                        # ★★★ 增加 PID 校验，确保找到的文件夹确实在目标分类下 ★★★
+                        if str(item.get('pid')) == str(target_cid):
+                            final_home_cid = item.get('cid')
+                            break
         except: pass
 
         # 策略 2: 创建剧集根目录
@@ -1227,7 +1232,11 @@ class SmartOrganizer:
                 try:
                     search_res = self.client.fs_files({'cid': target_cid, 'search_value': std_root_name, 'limit': 1})
                     if search_res.get('data'):
-                        final_home_cid = search_res['data'][0].get('cid')
+                        for item in search_res['data']:
+                            if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
+                                if str(item.get('pid')) == str(target_cid):
+                                    final_home_cid = item.get('cid')
+                                    break
                 except: pass
         
         if not final_home_cid:
@@ -1259,8 +1268,10 @@ class SmartOrganizer:
                 season_cid = None
                 
                 # 查找 Season 目录
+                # ★★★ 核心修复：使用目录遍历代替搜索，防止找到其他剧集的同名文件夹 ★★★
                 try:
-                    s_res = self.client.fs_files({'cid': final_home_cid, 'search_value': season_folder_name, 'limit': 1})
+                    # 不使用 search_value，直接列出子目录
+                    s_res = self.client.fs_files({'cid': final_home_cid, 'limit': 100})
                     if s_res.get('data'):
                         for item in s_res['data']:
                             if item.get('n') == season_folder_name and not item.get('fid'):
