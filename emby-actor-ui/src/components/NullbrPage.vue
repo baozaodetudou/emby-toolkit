@@ -123,86 +123,110 @@
                 </n-checkbox-group>
               </n-form-item>
 
-              <!-- 115 模块 -->
+              <!-- ★★★ 优化后的 115 与整理模块 (合并紧凑版) ★★★ -->
               <div class="sub-module">
-                <div class="sub-module-header">
-                  <span class="title">115 网盘设置</span>
+                <!-- 顶部：标题与连通性检查 -->
+                <div class="sub-module-header" style="margin-bottom: 8px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="title">115 网盘与整理</span>
+                    <!-- 状态提示 (紧凑显示) -->
+                    <n-tag v-if="p115Info" type="success" size="small" :bordered="false" round>
+                      <template #icon><n-icon :component="CheckIcon" /></template>
+                      {{ p115Info.msg || '连接正常' }}
+                    </n-tag>
+                    <n-tag v-else-if="config.p115_cookies" type="warning" size="small" :bordered="false" round>
+                      未检查
+                    </n-tag>
+                  </div>
                   <n-button size="tiny" secondary type="success" @click="check115Status" :loading="loading115Info">
                     检查连通性
                   </n-button>
                 </div>
-                <n-collapse-transition :show="!!p115Info">
-                  <n-alert type="success" :show-icon="true" style="margin-bottom: 12px; padding: 8px 12px;">
-                    {{ p115Info?.msg || 'Cookie 有效' }}
-                  </n-alert>
-                </n-collapse-transition>
-                <n-form-item label="Cookies" :show-feedback="false" style="margin-bottom: 12px;">
-                  <n-input-group>
-                    <n-input 
-                      readonly 
-                      :value="config.p115_cookies ? '已配置 (点击右侧按钮修改)' : '未配置'" 
-                      :placeholder="config.p115_cookies ? '' : '未配置'"
-                      style="pointer-events: none;"
-                    >
-                      <template #prefix>
-                        <n-icon :color="config.p115_cookies ? '#18a058' : '#999'">
-                          <component :is="config.p115_cookies ? CheckIcon : CloseIcon" />
-                        </n-icon>
-                      </template>
-                    </n-input>
-                    <n-button type="primary" secondary @click="showCookieModal = true">
-                      <template #icon><n-icon><SettingsIcon /></n-icon></template>
-                      设置 Cookie
-                    </n-button>
-                  </n-input-group>
-                </n-form-item>
-                <n-form-item label="待整理目录">
-                  <n-input-group>
-                    <n-input 
-                      :value="config.p115_save_path_name || config.p115_save_path_cid" 
-                      placeholder="请选择目录" 
-                      readonly 
-                      @click="openFolderSelector('config', config.p115_save_path_cid)"
-                    >
-                      <template #prefix><n-icon :component="FolderIcon" /></template>
-                    </n-input>
-                    <n-button type="primary" ghost @click="openFolderSelector('config', config.p115_save_path_cid)">
-                      选择
-                    </n-button>
-                  </n-input-group>
-                </n-form-item>
-              </div>
 
-              <!-- 智能整理模块 -->
-              <div class="sub-module" style="border-left: 4px solid var(--n-warning-color);">
-                <div class="sub-module-header">
-                  <span class="title">整理入库 (可选)</span>
-                  <n-switch v-model:value="config.enable_smart_organize" size="small">
-                    <template #checked>开启</template>
-                    <template #unchecked>关闭</template>
-                  </n-switch>
-                </div>
-                
-                <n-collapse-transition :show="config.enable_smart_organize">
-                  <p style="font-size: 12px; color: #999; margin-bottom: 12px;">
-                    开启后，系统将接管整理权限。规则从上到下依次匹配，一旦匹配成功将停止继续匹配。
-                  </p>
-                  
-                  <!-- 规则概览与入口 -->
-                  <div class="organize-summary-box">
-                    <div style="display: flex; align-items: center;">
-                      <n-icon size="24" color="#f0a020" style="margin-right: 12px;"><ListIcon /></n-icon>
-                      <div style="display: flex; flex-direction: column;">
-                        <span style="font-weight: bold; font-size: 14px;">已配置 {{ sortingRules.length }} 条分类规则</span>
-                        <span style="font-size: 12px; opacity: 0.7;">点击右侧按钮进行排序、添加或修改</span>
-                      </div>
-                    </div>
-                    <n-button type="primary" secondary @click="showRuleManagerModal = true">
-                      <template #icon><n-icon><SettingsIcon /></n-icon></template>
-                      配置分类规则
-                    </n-button>
+                <!-- 中间：双列输入框 (Cookie 和 目录) -->
+                <n-grid :cols="2" :x-gap="12">
+                  <n-gi>
+                    <n-form-item label="Cookies" :show-feedback="false">
+                      <n-input-group>
+                        <n-input 
+                          readonly 
+                          :value="config.p115_cookies ? '已配置' : ''" 
+                          :placeholder="config.p115_cookies ? '' : '未配置'"
+                          style="pointer-events: none;"
+                        >
+                          <template #prefix>
+                            <n-icon :color="config.p115_cookies ? '#18a058' : '#ccc'">
+                              <component :is="config.p115_cookies ? CheckIcon : CloseIcon" />
+                            </n-icon>
+                          </template>
+                        </n-input>
+                        <n-button type="primary" ghost @click="showCookieModal = true">
+                          设置
+                        </n-button>
+                      </n-input-group>
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi>
+                    <n-form-item label="待整理目录" :show-feedback="false">
+                      <n-input-group>
+                        <n-input 
+                          :value="config.p115_save_path_name || config.p115_save_path_cid" 
+                          placeholder="选择目录" 
+                          readonly 
+                          @click="openFolderSelector('config', config.p115_save_path_cid)"
+                        >
+                          <template #prefix><n-icon :component="FolderIcon" /></template>
+                        </n-input>
+                        <n-button type="primary" ghost @click="openFolderSelector('config', config.p115_save_path_cid)">
+                          选择
+                        </n-button>
+                      </n-input-group>
+                    </n-form-item>
+                  </n-gi>
+                </n-grid>
+
+                <n-divider style="margin: 12px 0;" />
+
+                <!-- 底部：整理开关与操作按钮 (Flex 布局) -->
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <!-- 左侧：开关与说明 -->
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <n-switch v-model:value="config.enable_smart_organize">
+                      <template #checked>智能整理: 开启</template>
+                      <template #unchecked>智能整理: 关闭</template>
+                    </n-switch>
+                    <n-text depth="3" style="font-size: 12px;" class="hide-on-mobile">
+                      <span v-if="config.enable_smart_organize">系统将自动监控并整理上述目录</span>
+                      <span v-else>仅转存，不执行整理</span>
+                    </n-text>
                   </div>
-                </n-collapse-transition>
+
+                  <!-- 右侧：操作按钮组 -->
+                  <n-space size="small">
+                    <!-- ★★★ 新增：立即扫描按钮 ★★★ -->
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-button 
+                          secondary 
+                          type="info" 
+                          @click="handleScanTask" 
+                          :loading="scanningTask"
+                          :disabled="!config.enable_smart_organize"
+                        >
+                          <template #icon><n-icon :component="RunIcon" /></template>
+                          整理
+                        </n-button>
+                      </template>
+                      立即扫描待整理目录并执行归类
+                    </n-tooltip>
+
+                    <!-- 规则管理按钮 -->
+                    <n-button secondary @click="showRuleManagerModal = true">
+                      <template #icon><n-icon :component="ListIcon" /></template>
+                      规则 ({{ sortingRules.length }})
+                    </n-button>
+                  </n-space>
+                </div>
               </div>
 
               <!-- CMS 模块 -->
@@ -804,7 +828,8 @@ import {
   FolderOpenOutline as FolderOpenIcon,
   Folder as FolderIcon,
   HomeOutline as HomeIcon,
-  ChevronForward as ChevronRightIcon
+  ChevronForward as ChevronRightIcon,
+  PlayOutline as RunIcon
 } from '@vicons/ionicons5';
 import draggable from 'vuedraggable';
 const message = useMessage();
@@ -823,7 +848,26 @@ const config = reactive({
   presets: [],
   filters: { resolutions: [], qualities: [], containers: [], require_zh: false, movie_min_size: 0, movie_max_size: 0, tv_min_size: 0, tv_max_size: 0 }
 });
+const scanningTask = ref(false);
 
+const handleScanTask = async () => {
+  scanningTask.value = true;
+  try {
+    // 调用通用的任务执行接口
+    const res = await axios.post('/api/tasks/run', { 
+      task_name: 'scan-organize-115' 
+    });
+    
+    if (res.data) {
+      message.success('已触发后台扫描任务，请稍候查看日志');
+    }
+  } catch (e) {
+    message.error('任务启动失败: ' + (e.response?.data?.error || e.message));
+  } finally {
+    // 稍微延迟一下 loading 状态，防止闪烁
+    setTimeout(() => { scanningTask.value = false; }, 500);
+  }
+};
 // 用户信息与兑换
 const userProfile = ref(null);
 const redeemCodeInput = ref('');
@@ -1862,5 +1906,10 @@ onMounted(async () => {
 
 .rule-desc span {
   color: var(--n-text-color-3);
+}
+@media (max-width: 600px) {
+  .hide-on-mobile {
+    display: none;
+  }
 }
 </style>

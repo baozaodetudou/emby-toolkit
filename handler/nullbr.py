@@ -1712,3 +1712,192 @@ def auto_download_best_resource(tmdb_id, media_type, title, season_number=None, 
     except Exception as e:
         logger.error(f"  ➜ NULLBR 搜索失败: {e}")
         return False
+    
+# ==============================================================================
+# ★★★ 新增：主动扫描整理任务 (Task) ★★★
+# ==============================================================================
+
+def _identify_media_enhanced(filename):
+    """
+    增强识别逻辑：
+    1. 支持多种 TMDb ID 标签格式: {tmdb=xxx}, {tmdb-xxx}, {tmdbid=xxx}, {tmdbid-xxx}
+    2. 支持标准命名格式: Title (Year)
+    3. 简单区分 TV/Movie
+    
+    返回: (tmdb_id, media_type, title) 或 (None, None, None)
+    """
+    tmdb_id = None
+    media_type = 'movie' # 默认为电影
+    title = filename
+    
+    # 1. 优先提取 TMDb ID 标签 (最稳)
+    # 正则解释: 
+    # \{? : 可选的左大括号
+    # tmdb(?:id)? : 匹配 tmdb 或 tmdbid
+    # [=\-] : 匹配 = 或 -
+    # (\d+) : 捕获数字 ID
+    # \}? : 可选的右大括号
+    match_tag = re.search(r'\{?tmdb(?:id)?[=\-](\d+)\}?', filename, re.IGNORECASE)
+    
+    if match_tag:
+        tmdb_id = match_tag.group(1)
+        
+        # 简单判断：文件名包含季集信息 -> TV
+        if re.search(r'(?:S\d{1,2}|E\d{1,2}|第\d+季|Season)', filename, re.IGNORECASE):
+            media_type = 'tv'
+        
+        # 提取标题 (去掉标签和年份，用于日志显示)
+        # 移除所有可能的标签格式
+        clean_name = re.sub(r'\{?tmdb(?:id)?[=\-]\d+\}?', '', filename, flags=re.IGNORECASE).strip()
+        match_title = re.match(r'^(.+?)\s*[\(\[]\d{4}[\)\]]', clean_name)
+        if match_title:
+            title = match_title.group(1).strip()
+        else:
+            title = clean_name
+            
+        return tmdb_id, media_type, title
+
+    # 2. 其次提取标准格式 Title (Year) (次稳)
+    # 必须严格匹配 "名称 (20xx)" 这种格式
+    match_std = re.match(r'^(.+?)\s+[\(\[](\d{4})[\)\]]', filename)
+    if match_std:
+        name_part = match_std.group(1).strip()
+        year_part = match_std.group(2)
+        
+        # 简单判断 TV
+        if re.search(r'(?:S\d{1,2}|E\d{1,2}|第\d+季|Season)', filename, re.IGNORECASE):
+            media_type = 'tv'
+            
+        # 尝试通过 TMDb API 确认 ID
+        try:
+            api_key = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_TMDB_API_KEY)
+            if api_key:
+                # ★★★ 修正点：使用 tmdb.search_media 通用函数 ★★★
+                # 函数签名: search_media(query, api_key, item_type, year)
+                results = tmdb.search_media(
+                    query=name_part, 
+                    api_key=api_key, 
+                    item_type=media_type, 
+                    year=year_part
+                )
+                
+                if results and len(results) > 0:
+                    best = results[0]
+                    return best['id'], media_type, (best.get('title') or best.get('name'))
+        except Exception as e:
+            # 捕获异常防止中断扫描
+            # logger.debug(f"TMDb 搜索失败: {e}")
+            pass
+
+    return None, None, None
+
+def task_scan_and_organize_115(processor=None):
+    """
+    [任务链] 主动扫描 115 待整理目录
+    - 识别成功 -> 归类到目标目录
+    - 识别失败 -> 移动到 '未识别' 目录
+    """
+    logger.info("=== 开始执行 115 待整理目录扫描 (增强版) ===")
+    
+    if P115Client is None:
+        logger.error("未安装 p115client，无法执行。")
+        return
+
+    config = get_config()
+    cookies = config.get('p115_cookies')
+    cid_val = config.get('p115_save_path_cid')
+    enable_organize = config.get('enable_smart_organize', False)
+
+    if not cookies:
+        logger.error("未配置 115 Cookies，跳过。")
+        return
+    if not cid_val or str(cid_val) == '0':
+        logger.error("未配置待整理目录 (CID)，跳过。")
+        return
+    if not enable_organize:
+        logger.warning("未开启智能整理开关，仅扫描不处理。")
+        return
+
+    try:
+        client = P115Client(cookies)
+        save_cid = int(cid_val)
+        
+        # 1. 准备 '未识别' 目录
+        unidentified_folder_name = "未识别"
+        unidentified_cid = None
+        
+        # 先查找是否存在
+        try:
+            search_res = client.fs_files({'cid': save_cid, 'search_value': unidentified_folder_name, 'limit': 1})
+            if search_res.get('data'):
+                for item in search_res['data']:
+                    if item.get('n') == unidentified_folder_name and (item.get('ico') == 'folder' or not item.get('fid')):
+                        unidentified_cid = item.get('cid')
+                        break
+        except: pass
+        
+        # 不存在则创建
+        if not unidentified_cid:
+            try:
+                mk_res = client.fs_mkdir(unidentified_folder_name, save_cid)
+                if mk_res.get('state'):
+                    unidentified_cid = mk_res.get('cid')
+                    logger.info(f"  📂 创建 '未识别' 目录: CID {unidentified_cid}")
+            except Exception as e:
+                logger.warning(f"  ⚠️ 创建 '未识别' 目录失败: {e}")
+
+        # 2. 扫描目录 (限制 50 个)
+        logger.info(f"正在扫描目录 CID: {save_cid} ...")
+        res = client.fs_files({'cid': save_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
+        
+        if not res.get('data'):
+            logger.info("待整理目录为空。")
+            return
+
+        processed_count = 0
+        moved_to_unidentified = 0
+        
+        for item in res['data']:
+            name = item.get('n')
+            item_id = item.get('fid') or item.get('cid') # 可能是文件或文件夹
+            
+            # 跳过 '未识别' 目录本身
+            if str(item_id) == str(unidentified_cid) or name == unidentified_folder_name:
+                continue
+            
+            # 3. 识别
+            tmdb_id, media_type, title = _identify_media_enhanced(name)
+            
+            if tmdb_id:
+                logger.info(f"  ➜ 识别成功: {name} -> ID:{tmdb_id} ({media_type})")
+                
+                try:
+                    # 4. 归类
+                    organizer = SmartOrganizer(client, tmdb_id, media_type, title)
+                    target_cid = organizer.get_target_cid()
+                    
+                    # 执行整理
+                    if organizer.execute(item, target_cid):
+                        processed_count += 1
+                        time.sleep(1) 
+                except Exception as e:
+                    logger.error(f"  ❌ 整理出错: {e}")
+            else:
+                # 5. 识别失败 -> 移动到 '未识别' 目录
+                if unidentified_cid:
+                    logger.info(f"  ⚠️ 无法识别: {name} -> 移动到 '未识别' 目录")
+                    try:
+                        move_res = client.fs_move(item_id, unidentified_cid)
+                        if move_res.get('state'):
+                            moved_to_unidentified += 1
+                        else:
+                            logger.warning(f"  ❌ 移动失败: {move_res}")
+                    except Exception as e:
+                        logger.error(f"  ❌ 移动异常: {e}")
+                else:
+                    logger.warning(f"  ⚠️ 无法识别且无处存放: {name}")
+
+        logger.info(f"=== 扫描结束，成功归类 {processed_count} 个，移入未识别 {moved_to_unidentified} 个 ===")
+
+    except Exception as e:
+        logger.error(f"115 扫描任务异常: {e}", exc_info=True)
