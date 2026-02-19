@@ -1732,7 +1732,7 @@ def task_scan_and_organize_115(processor=None):
         res = client.fs_files({'cid': save_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
         
         if not res.get('data'):
-            logger.info(f"  📂 {save_name}目录为空。")
+            logger.info(f"  📂 [{save_name}] 目录为空。")
             return
 
         processed_count = 0
