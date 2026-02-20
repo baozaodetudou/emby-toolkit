@@ -151,7 +151,19 @@ class SmartOrganizer:
 
             # 补充标题日期供重命名
             data['title'] = raw_details.get('title') or raw_details.get('name')
-            data['date'] = raw_details.get('release_date') or raw_details.get('first_air_date')
+            date_str = raw_details.get('release_date') or raw_details.get('first_air_date')
+            data['date'] = date_str
+            data['year'] = 0
+            
+            if date_str and len(str(date_str)) >= 4:
+                try:
+                    data['year'] = int(str(date_str)[:4])
+                except: 
+                    pass
+            
+            # 打印调试日志，确认年份是否获取成功
+            # if str(self.tmdb_id) == '172752':
+            #     logger.info(f"  📅 [调试] ID:172752 解析年份: {data['year']} (原始日期: {date_str})")
 
             return data
 
@@ -227,18 +239,13 @@ class SmartOrganizer:
         # 8. 年份 (Year) 
         year_min = rule.get('year_min')
         year_max = rule.get('year_max')
-
+        
         if year_min or year_max:
-            date_str = self.details.get('release_date') or self.details.get('first_air_date')
-            current_year = 0
-            if date_str and len(date_str) >= 4:
-                try:
-                    current_year = int(date_str[:4])
-                except: pass
-
-            # 如果获取不到年份，且设置了年份限制，则视为不匹配（严谨策略）
+            current_year = self.raw_metadata.get('year', 0)
+            
+            # 如果获取不到年份，且设置了年份限制，则视为不匹配
             if current_year == 0: return False
-
+            
             if year_min and current_year < int(year_min): return False
             if year_max and current_year > int(year_max): return False
 
