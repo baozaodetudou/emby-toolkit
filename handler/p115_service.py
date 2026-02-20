@@ -1,6 +1,7 @@
 # handler/p115_service.py
 import logging
 import requests
+import random
 import os
 import re
 import threading
@@ -630,6 +631,7 @@ class SmartOrganizer:
         moved_count = 0
 
         for file_item in candidates:
+            time.sleep(random.uniform(0.5, 1.0))
             fid = file_item.get('fid')
             file_name = file_item.get('n', '')
             ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
