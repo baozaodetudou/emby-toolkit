@@ -295,6 +295,8 @@ const filteredItems = computed(() => {
     items = items.filter(item => item.status === 'needed');
   } else if (filter.value === 'ignored') {
     items = items.filter(item => item.status === 'ignored');
+  } else if (filter.value === 'subscribed') {
+    items = items.filter(item => item.status === 'subscribed');
   }
 
   if (searchQuery.value) {
