@@ -10,6 +10,7 @@ import time
 import config_manager
 import constants
 from database import settings_db
+from database.connection import get_db_connection
 import handler.tmdb as tmdb
 import utils
 try:
@@ -18,6 +19,44 @@ except ImportError:
     P115Client = None
 
 logger = logging.getLogger(__name__)
+
+# ======================================================================
+# ★★★ 新增：115 目录树 DB 缓存管理器 ★★★
+# ======================================================================
+class P115CacheManager:
+    @staticmethod
+    def get_cid(parent_cid, name):
+        """从本地数据库获取 CID (毫秒级)"""
+        if not parent_cid or not name: return None
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id FROM p115_filesystem_cache WHERE parent_id = %s AND name = %s AND is_directory = TRUE", 
+                        (str(parent_cid), str(name))
+                    )
+                    row = cursor.fetchone()
+                    return row['id'] if row else None
+        except Exception as e:
+            logger.error(f"  ❌ 读取 115 DB 缓存失败: {e}")
+            return None
+
+    @staticmethod
+    def save_cid(cid, parent_cid, name):
+        """将 CID 存入本地数据库缓存"""
+        if not cid or not parent_cid or not name: return
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO p115_filesystem_cache (id, parent_id, name, is_directory)
+                        VALUES (%s, %s, %s, TRUE)
+                        ON CONFLICT (parent_id, name, is_directory)
+                        DO UPDATE SET id = EXCLUDED.id, updated_at = NOW()
+                    """, (str(cid), str(parent_cid), str(name)))
+                    conn.commit()
+        except Exception as e:
+            logger.error(f"  ❌ 写入 115 DB 缓存失败: {e}")
 
 # --- CMS通知防抖定时器 ---
 _cms_timer = None
@@ -81,7 +120,6 @@ class P115Service:
         config = get_config()
         return config.get(constants.CONFIG_OPTION_115_COOKIES)
     
-_directory_cid_cache = {} # 全局目录 CID 缓存，key 格式: f"{parent_cid}_{dir_name}"
 class SmartOrganizer:
     def __init__(self, client, tmdb_id, media_type, original_title):
         self.client = client
@@ -604,40 +642,62 @@ class SmartOrganizer:
         logger.info(f"  🚀 [115] 开始整理: {root_item.get('n')} -> {std_root_name}")
 
         # ==================================================
-        # 步骤 A: 获取主目录 CID (先创建，后查找)
+        # 步骤 A: 获取主目录 CID (★ 纯净增强版：先DB -> 再创建 -> 搜索 -> 暴力翻页)
         # ==================================================
-        final_home_cid = None
-        cache_key = f"{dest_parent_cid}-{std_root_name}"
-        
-        if cache_key in _directory_cid_cache:
-            final_home_cid = _directory_cid_cache[cache_key]
+        final_home_cid = P115CacheManager.get_cid(dest_parent_cid, std_root_name)
+
+        if final_home_cid:
             logger.info(f"  ⚡ [缓存命中] 主目录: {std_root_name}")
-        
-        if not final_home_cid:
-            # 1. 直接尝试创建
+        else:
+            # 1. 缓存没命中，直接尝试创建
             mk_res = self.client.fs_mkdir(std_root_name, dest_parent_cid)
             if mk_res.get('state'):
                 final_home_cid = mk_res.get('cid')
-                logger.info(f"  🆕 创建新主目录: {std_root_name}")
+                P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name)
+                logger.info(f"  🆕 创建新主目录并缓存: {std_root_name}")
             else:
-                # 2. 创建失败（通常是已存在），则执行查找
+                # 2. 创建失败（目录已存在），尝试使用 115 的 search_value (虽然它很瞎)
                 try:
                     search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 1150})
                     if search_res.get('data'):
                         for item in search_res['data']:
                             if item.get('n') == std_root_name and not item.get('fid'):
                                 final_home_cid = item.get('cid')
-                                logger.info(f"  📂 发现已存在主目录: {std_root_name}")
                                 break
                 except Exception as e:
-                    logger.warning(f"  ⚠️ 查找主目录异常: {e}")
+                    logger.warning(f"  ⚠️ 115模糊查找异常: {e}")
 
-            if final_home_cid and self.media_type == 'tv':
-                _directory_cid_cache[cache_key] = final_home_cid
-                logger.info(f"  ✅ 主目录已缓存: {std_root_name}")
+                # 3. ★★★ 终极暴力兜底 ★★★：如果搜索真瞎了，手工翻页遍历找！
+                if not final_home_cid:
+                    logger.warning(f"  ⚠️ 115搜索失效，启动全量遍历查找老目录: '{std_root_name}' ...")
+                    offset = 0
+                    limit = 1000
+                    while True:
+                        try:
+                            # type=0 表示只请求文件夹，极大减少数据量
+                            res = self.client.fs_files({'cid': dest_parent_cid, 'limit': limit, 'offset': offset, 'type': 0})
+                            data = res.get('data', [])
+                            if not data: break # 翻到底了
+                            
+                            for item in data:
+                                if item.get('n') == std_root_name:
+                                    final_home_cid = item.get('cid')
+                                    break
+                                    
+                            if final_home_cid: break # 找到了
+                            
+                            offset += limit # 准备查下一页
+                        except Exception as e:
+                            logger.error(f"遍历查找失败: {e}")
+                            break
+
+                # 只要找到了，就永远记在本地数据库里！
+                if final_home_cid:
+                    P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name)
+                    logger.info(f"  📂 成功查找到已存在主目录并永久缓存: {std_root_name}")
 
         if not final_home_cid:
-            logger.error(f"  ❌ 无法获取或创建目标目录")
+            logger.error(f"  ❌ 无法获取或创建目标目录 (已尝试所有手段)")
             return False
 
         # ==================================================
@@ -675,19 +735,21 @@ class SmartOrganizer:
             real_target_cid = final_home_cid
             if self.media_type == 'tv' and season_num is not None:
                 s_name = f"Season {season_num:02d}"
-                s_cache_key = f"{final_home_cid}_{s_name}"
                 
-                if s_cache_key in _directory_cid_cache:
+                # ★ 改用 DB 缓存
+                s_cid = P115CacheManager.get_cid(final_home_cid, s_name)
+                
+                if s_cid:
                     logger.info(f"  ⚡ [缓存命中] 季目录: {std_root_name} - {s_name}")
-                    real_target_cid = _directory_cid_cache[s_cache_key]
+                    real_target_cid = s_cid
                 else:
-                    # 尝试创建季目录
+                    # 尝试创建
                     s_mk = self.client.fs_mkdir(s_name, final_home_cid)
                     s_cid = s_mk.get('cid') if s_mk.get('state') else None
                     
                     if not s_cid: # 创建失败，查找
                         try:
-                            s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 100})
+                            s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 1150})
                             for item in s_search.get('data', []):
                                 if item.get('n') == s_name and not item.get('fid'):
                                     s_cid = item.get('cid')
@@ -695,8 +757,8 @@ class SmartOrganizer:
                         except: pass
                     
                     if s_cid:
-                        _directory_cid_cache[s_cache_key] = s_cid
-                        logger.info(f"  ✅ 季目录已缓存: {std_root_name} - {s_name}")
+                        P115CacheManager.save_cid(s_cid, final_home_cid, s_name)
+                        logger.info(f"  ✅ 季目录已入缓存: {std_root_name} - {s_name}")
                         real_target_cid = s_cid
 
             # 3. 先改名
@@ -1034,3 +1096,56 @@ def task_scan_and_organize_115(processor=None):
 
     except Exception as e:
         logger.error(f"  ⚠️ 115 扫描任务异常: {e}", exc_info=True)
+
+def task_sync_115_directory_tree(processor=None):
+    """
+    主动同步 115 分类目录下的所有子目录到本地 DB 缓存。
+    这能彻底解决 115 API search_value 失效导致的老目录无法识别问题。
+    """
+    logger.info("=== 开始全量同步 115 目录树到本地数据库 ===")
+    client = P115Service.get_client()
+    if not client: return
+
+    raw_rules = settings_db.get_setting(constants.DB_KEY_115_SORTING_RULES)
+    if not raw_rules: return
+    
+    rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
+    target_cids = set()
+    for rule in rules:
+        if rule.get('enabled', True) and rule.get('cid'):
+            target_cids.add(str(rule['cid']))
+
+    total_cached = 0
+    for cid in target_cids:
+        logger.info(f"  🔍 正在缓存分类目录 (CID: {cid}) 下的所有子目录...")
+        offset = 0
+        limit = 1000
+        while True:
+            try:
+                # 只获取文件夹 (type=0)
+                res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'type': 0})
+                data = res.get('data', [])
+                if not data: break
+                
+                with get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        for item in data:
+                            sub_cid = item.get('cid')
+                            sub_name = item.get('n')
+                            if sub_cid and sub_name:
+                                cursor.execute("""
+                                    INSERT INTO p115_filesystem_cache (id, parent_id, name, is_directory)
+                                    VALUES (%s, %s, %s, TRUE)
+                                    ON CONFLICT (parent_id, name, is_directory)
+                                    DO UPDATE SET id = EXCLUDED.id, updated_at = NOW()
+                                """, (str(sub_cid), str(cid), str(sub_name)))
+                                total_cached += 1
+                        conn.commit()
+                
+                offset += limit
+                time.sleep(1) # 限流
+            except Exception as e:
+                logger.error(f"同步目录树异常: {e}")
+                break
+
+    logger.info(f"=== 同步完成，共更新 {total_cached} 个目录的 DB 缓存 ===")

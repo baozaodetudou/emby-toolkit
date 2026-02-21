@@ -25,7 +25,7 @@ from .discover import task_update_daily_theme
 from .resubscribe import task_update_resubscribe_cache, task_resubscribe_library
 from .vector_tasks import task_generate_embeddings
 from .system_update import task_check_and_update_container
-from handler.p115_service import task_scan_and_organize_115
+from handler.p115_service import task_scan_and_organize_115, task_sync_115_directory_tree
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +206,7 @@ def get_task_registry(context: str = 'all'):
         'scan-incomplete-assets': (task_scan_incomplete_assets, "检查媒体信息", 'media', True),
         'system-auto-update': (task_check_and_update_container, "系统自动更新", 'media', True),
         'scan-organize-115': (task_scan_and_organize_115, "网盘文件整理", 'media', True),
+        'sync-115-directory-tree': (task_sync_115_directory_tree, "同步网盘目录", 'media', True),
         
         # --- 不适合任务链的、需要特定参数的任务 ---
         'add-all-series-to-watchlist': (task_add_all_series_to_watchlist, "一键扫描全库剧集", 'watchlist', False),
