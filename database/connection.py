@@ -400,6 +400,23 @@ def init_db():
                     )
                 """)
 
+                logger.trace("  ➜ 正在创建 'p115_filesystem_cache' 表 (目录树缓存)...")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS p115_filesystem_cache (
+                        id TEXT PRIMARY KEY,           -- 115 的 cid (文件夹) 或 fid (文件)
+                        parent_id TEXT NOT NULL,       -- 父目录 ID (根目录为 '0')
+                        name TEXT NOT NULL,            -- 文件/文件夹名称
+                        is_directory BOOLEAN DEFAULT FALSE, -- 是否为文件夹
+                        pick_code TEXT,                -- 提取码 (用于下载/播放)
+                        size BIGINT DEFAULT 0,         -- 文件大小
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- 最后同步时间
+                        
+                        -- 复合唯一约束：同一个父目录下不能有同名文件 (用于快速查找)
+                        -- 注意：115 实际上允许同名，但在我们的管理逻辑中通常假设唯一，或者只缓存最新的
+                        CONSTRAINT uniq_p115_parent_name UNIQUE (parent_id, name, is_directory)
+                    )
+                """)
+
                 # ======================================================================
                 # ★★★ 数据库平滑升级 (START) ★★★
                 # 此处代码用于新增在新版本中添加的列。
@@ -530,6 +547,14 @@ def init_db():
 
                     # 11. 【跟播系统】加速“正在连载”剧集的筛选
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_mm_watchlist_airing ON media_metadata (watchlist_is_airing) WHERE item_type = 'Series';")
+
+                    # 12. 【115 目录缓存】加速本地目录树查找
+                    # 加速 "列出某目录下的所有文件"
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_p115_parent_id ON p115_filesystem_cache (parent_id);")
+                    # 加速 "全局搜索某个文件"
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_p115_name ON p115_filesystem_cache (name);")
+                    # 加速 "只看文件夹" (用于构建目录树)
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_p115_is_directory ON p115_filesystem_cache (is_directory);")
 
                 except Exception as e_index:
                     logger.error(f"  ➜ 创建索引时出错: {e_index}", exc_info=True)
