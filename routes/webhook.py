@@ -579,7 +579,7 @@ def emby_webhook():
             target_cid = organizer.get_target_cid()
             
             if target_cid:
-                logger.info(f"  🚀 [MP上传] 新文件: {target_item.get('name')} (文件大小: {int(target_item.get('size', 0))/1024/1024:.2f} MB)")
+                logger.info(f"  🚀 [MP上传] 新文件: {target_item.get('name')} (文件大小: {int(target_item.get('size', 0))/1024/1024/1024:.2f} GB)")
                 
                 # 构造真实的文件对象 (模拟 115 API 返回的结构)
                 real_root_item = {
