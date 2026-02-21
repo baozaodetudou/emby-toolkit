@@ -735,17 +735,32 @@ class SmartOrganizer:
 
             # 只有剧集且成功解析出季号时，才放入 Season 文件夹
             if self.media_type == 'tv' and season_num is not None:
-                if season_num not in season_folders_cache:
-                    s_name = f"Season {season_num:02d}"
+                s_name = f"Season {season_num:02d}"
+                # 构建全局唯一的缓存 Key：父目录CID_季目录名
+                s_cache_key = f"{final_home_cid}_{s_name}"
+                
+                # 1. 先查全局缓存
+                if s_cache_key in _directory_cid_cache:
+                    target_folder_cid = _directory_cid_cache[s_cache_key]
+                    logger.debug(f"  ⚡ [季目录缓存] 命中: {s_name}")
+                else:
+                    # 2. 缓存没有，再去创建/查找
                     s_mk = self.client.fs_mkdir(s_name, final_home_cid)
                     if s_mk.get('state'):
-                        season_folders_cache[season_num] = s_mk.get('cid')
+                        s_cid = s_mk.get('cid')
+                        _directory_cid_cache[s_cache_key] = s_cid
+                        logger.info(f"  ⚡ 季目录缓存更新: {s_name} -> CID {s_cid}")
+                        target_folder_cid = s_cid
                     else:
+                        # 创建失败（可能已存在），回退查找
                         s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 10})
                         if s_search.get('data'):
                             for item in s_search['data']:
                                 if item.get('n') == s_name and not item.get('fid'):
-                                    season_folders_cache[season_num] = item.get('cid')
+                                    s_cid = item.get('cid')
+                                    _directory_cid_cache[s_cache_key] = s_cid
+                                    logger.info(f"  ⚡ 季目录缓存更新: {s_name} -> CID {s_cid}")
+                                    target_folder_cid = s_cid
                                     break
 
                 if season_folders_cache.get(season_num):
@@ -886,7 +901,7 @@ def get_115_account_info():
         # 只要没报错，就是有效
         return {
             "valid": True,
-            "msg": "Cookie 状态正常，可正常推送"
+            "msg": "115 状态正常，Cookie 有效"
         }
 
     except Exception as e:
