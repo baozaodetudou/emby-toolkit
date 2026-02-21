@@ -203,7 +203,7 @@ def process_batch_queue():
 
 def process_delete_batch_queue():
     """
-    处理删除队列 (批量版 + 排除路径分流版)
+    处理删除队列 (批量版 + 排除路径分流版 + 存活性二次确认)
     """
     if not config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_MONITOR_ENABLED, False):
         with DELETE_QUEUE_LOCK:
@@ -212,21 +212,33 @@ def process_delete_batch_queue():
     
     global DELETE_DEBOUNCE_TIMER
     with DELETE_QUEUE_LOCK:
-        files = list(DELETE_EVENT_QUEUE)
+        raw_files = list(DELETE_EVENT_QUEUE)
         DELETE_EVENT_QUEUE.clear()
         DELETE_DEBOUNCE_TIMER = None
     
-    if not files: return
+    if not raw_files: return
     
     processor = MonitorService.processor_instance
     if not processor: return
+
+    # 存活性检查
+    files_to_really_delete = []
+    for f in raw_files:
+        if os.path.exists(f):
+            # 如果防抖延迟后文件依然存在，说明不是真正的删除（可能是覆盖、移动中的临时状态）
+            logger.debug(f"  [实时监控] 忽略虚假删除事件（文件仍存在）: {os.path.basename(f)}")
+            continue
+        files_to_really_delete.append(f)
+    
+    if not files_to_really_delete:
+        return
 
     exclude_paths = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_MONITOR_EXCLUDE_DIRS, [])
     
     files_to_delete_logic = []
     files_to_refresh_only = []
 
-    for file_path in files:
+    for file_path in files_to_really_delete:
         if _is_path_excluded(file_path, exclude_paths):
             files_to_refresh_only.append(file_path)
         else:
@@ -234,12 +246,12 @@ def process_delete_batch_queue():
 
     # 1. 正常逻辑：走处理器删除流程 (清理DB等)
     if files_to_delete_logic:
-        logger.info(f"  🗑️ [实时监控] 聚合处理删除事件: {len(files_to_delete_logic)} 个常规文件")
+        logger.info(f"  🗑️ [实时监控] 确认删除并聚合处理: {len(files_to_delete_logic)} 个常规文件")
         threading.Thread(target=processor.process_file_deletion_batch, args=(files_to_delete_logic,)).start()
 
     # 2. 排除路径逻辑：仅刷新 Emby (移除条目)
     if files_to_refresh_only:
-        logger.info(f"  🗑️ [实时监控] 聚合处理删除事件: {len(files_to_refresh_only)} 个排除路径文件 (仅刷新)")
+        logger.info(f"  🗑️ [实时监控] 确认删除并聚合处理: {len(files_to_refresh_only)} 个排除路径文件 (仅刷新)")
         threading.Thread(target=_handle_batch_delete_refresh_only, args=(files_to_refresh_only,)).start()
 
 def _handle_batch_file_task(processor, file_paths: List[str]):
