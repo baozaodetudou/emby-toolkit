@@ -1396,6 +1396,9 @@ class MediaProcessor:
                 r_date = db_row_complete.get('release_date')
                 if not r_date: db_row_complete['release_date'] = None
                 
+                l_date = db_row_complete.get('last_air_date')
+                if not l_date: db_row_complete['last_air_date'] = None
+
                 final_date_val = db_row_complete.get('release_date')
                 if final_date_val and isinstance(final_date_val, str) and len(final_date_val) >= 4:
                     try: db_row_complete['release_year'] = int(final_date_val[:4])
