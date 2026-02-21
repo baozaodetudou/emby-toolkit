@@ -370,15 +370,6 @@
                         </n-text>
                       </template>
                     </n-form-item>
-                    
-                    <n-form-item label="联动删除网盘文件（待开发）" path="p115_sync_delete">
-                        <n-switch v-model:value="configModel.p115_sync_delete" />
-                        <template #feedback>
-                          <n-text depth="3" style="font-size:0.8em;">
-                            <span style="color: #d03050;">高危操作：</span>当本地/Emby 删除媒体时，同步删除 115 网盘中的源文件。
-                          </n-text>
-                        </template>
-                    </n-form-item>
                   </n-card>
                 </n-gi>
 
