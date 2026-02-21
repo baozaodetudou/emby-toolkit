@@ -306,9 +306,9 @@
                 <!-- 中间：路径配置 -->
                 <n-gi>
                   <n-card :bordered="false" class="dashboard-card" style="height: 100%;">
-                    <template #header><span class="card-title">路径配置</span></template>
+                    <template #header><span class="card-title">整理配置</span></template>
                     
-                    <n-form-item label="默认上传/待整理目录" path="p115_save_path_cid">
+                    <n-form-item label="待整理目录" path="p115_save_path_cid">
                       <n-input-group>
                         <n-input 
                           :value="configModel.p115_save_path_name || configModel.p115_save_path_cid" 
@@ -323,7 +323,7 @@
                         </n-button>
                       </n-input-group>
                       <template #feedback>
-                        <n-text depth="3" style="font-size:0.8em;">NULLBR 转存和整理的目标目录。</n-text>
+                        <n-text depth="3" style="font-size:0.8em;">NULLBR 转存和MP上传的目录。</n-text>
                       </template>
                     </n-form-item>
 
@@ -333,7 +333,7 @@
                             <template #unchecked>仅转存</template>
                         </n-switch>
                         <template #feedback>
-                            <n-text depth="3" style="font-size:0.8em;">开启后，MP 上传或 NULLBR 转存的资源会自动按分类规则整理到目标目录。</n-text>
+                            <n-text depth="3" style="font-size:0.8em;">开启后，MP 上传或 NULLBR 转存的资源会自动按分类规则整理到目标目录。<br>MP需要安装webhook插件，POST方式通知ETK。</n-text>
                         </template>
                     </n-form-item>
 
