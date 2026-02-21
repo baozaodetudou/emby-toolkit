@@ -623,11 +623,11 @@ class SmartOrganizer:
                 # 2. 创建失败（通常是已存在），则执行查找
                 try:
                     search_payload = {
-                        'cid': dest_parent_cid, 
-                        'search_value': std_root_name, 
-                        'stdir': 1,   # 筛选时显示目录
-                        'nf': '1',    # 不显示文件
-                        'limit': 10   # 既然是精准搜索，命中结果通常在第一页
+                        'cid': dest_parent_cid,
+                        'search_value': std_root_name, # 服务器端过滤
+                        'fc_mix': 0,      # 目录置顶
+                        'show_dir': 1,    # 显示目录
+                        'limit': 20       # 过滤后结果很少，limit 无需太大
                     }
                     search_res = self.client.fs_files(search_payload)
                     if search_res.get('data'):
