@@ -817,13 +817,13 @@ def proxy_all(path):
                                 client = P115Service.get_client()
                                 if client:
                                     player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                                    url_obj = client.download_url(pick_code, user_agent=player_ua)
-                                    real_url = str(url_obj)
-                                    
-                                    if real_url:
-                                        logger.info(f"  🎬 [反代直链劫持] 成功拦截 Emby 流请求，直接 302 重定向至 115 CDN！")
-                                        from flask import redirect
-                                        return redirect(real_url, code=302)
+                                    from routes.p115 import _get_cached_115_url
+                                real_url = _get_cached_115_url(pick_code, player_ua)
+                                
+                                if real_url:
+                                    logger.info(f"  🚀 [反代秒播] 拦截成功！命中内存 115 直链，光速 302 重定向...")
+                                    from flask import redirect
+                                    return redirect(real_url, code=302)
             except Exception as e:
                 logger.error(f"  ❌ 尝试拦截并解析直链时出错，回退到原生播放: {e}")
 

@@ -3,12 +3,12 @@ import logging
 from flask import redirect
 import json
 import time
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, redirect
 from extensions import admin_required
 from database import settings_db
 from handler.p115_service import P115Service
 import constants
-
+from functools import lru_cache
 p115_bp = Blueprint('p115_bp', __name__, url_prefix='/api/p115')
 logger = logging.getLogger(__name__)
 
@@ -138,33 +138,38 @@ def handle_sorting_rules():
         settings_db.save_setting(constants.DB_KEY_115_SORTING_RULES, rules)
         return jsonify({"status": "success", "message": "115 分类规则已保存"})
     
-@p115_bp.route('/play/<pick_code>', methods=['GET'])
-def play_115_video(pick_code):
+@lru_cache(maxsize=1024)
+def _get_cached_115_url(pick_code, user_agent):
     """
-    终极黑魔法：115 极速 302 直链解析服务 (已修复 API 格式)
+    带缓存的 115 直链获取器
     """
     client = P115Service.get_client()
-    if not client:
-        return "115 Client Not Initialized", 500
-        
+    if not client: return None
     try:
-        # 获取播放器(如Emby/Infuse)发起请求时的真实 User-Agent
-        # 这一步非常重要，因为 115 官方会校验获取直链的 UA 和实际拉流的 UA 是否一致！
+        url_obj = client.download_url(pick_code, user_agent=user_agent)
+        return str(url_obj) if url_obj else None
+    except Exception as e:
+        logger.error(f"  ❌ 获取 115 直链 API 报错: {e}")
+        return None
+
+@p115_bp.route('/play/<pick_code>', methods=['GET', 'HEAD']) # 允许 HEAD 请求，加速客户端嗅探
+def play_115_video(pick_code):
+    """
+    终极极速 302 直链解析服务 (带内存缓存版)
+    """
+    try:
+        # 获取客户端真实 UA
         player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
         
-        # ★ 修复 2：调用最新的 download_url 接口，并传入播放器的 UA
-        url_obj = client.download_url(pick_code, user_agent=player_ua)
-        
-        # p115client 返回的 url_obj 是一个 P115URL 类（字符串的子类），直接转成 str 就是真实链接
-        real_url = str(url_obj)
+        # ★ 从内存缓存中光速获取直链 (或者去 115 获取并存入缓存)
+        real_url = _get_cached_115_url(pick_code, player_ua)
         
         if not real_url:
-            logger.error(f"  ❌ 无法获取直链，pick_code: {pick_code} (返回为空)")
             return "Cannot get video stream from 115", 404
             
-        logger.info(f"  🎬 [直链解析成功] 已拦截点播请求，正在 302 跳转至 115 CDN...")
+        logger.info(f"  🚀 [原端口秒播] 命中 115 直链，302 光速重定向中...")
         
-        # HTTP 302 临时重定向，让 Emby/播放器 拿着直链自己去拉流
+        # 直接 302 跳转
         return redirect(real_url, code=302)
         
     except Exception as e:
