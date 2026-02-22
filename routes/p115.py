@@ -221,12 +221,15 @@ def fix_strm_files():
                         elif content.startswith('etk_direct_play://'):
                             pick_code = content.split('//')[1].split('/')[0].strip()
                             
-                        # 模式 3: CMS 生成的经典格式 (神级兼容)
-                        # 例: http://192.168.31.177:9527/d/dh4jkd6lmhye6x5l5.mkv?/文件名.mkv
-                        # 解析逻辑：找到 "/d/" 后面的内容，截取到第一个 "." 之前
-                        elif '/d/' in content and '?' in content:
-                            # 提取 /d/ 和 . 之间的那段纯字母数字
-                            match = re.search(r'/d/([a-zA-Z0-9]+)\.', content)
+                        # 模式 3: CMS 生成的经典格式 (增强版兼容)
+                        # 解析逻辑：提取 /d/ 后面，直到出现 . 或 ? 或 / 之前的字符
+                        elif '/d/' in content:
+                            # 这里的正则改成了匹配 /d/ 后面非特殊符号的部分
+                            match = re.search(r'/d/([a-zA-Z0-9]+)[.?/]', content)
+                            if not match:
+                                # 如果后面没接符号，尝试匹配到字符串结尾
+                                match = re.search(r'/d/([a-zA-Z0-9]+)$', content)
+                                
                             if match:
                                 pick_code = match.group(1)
                                 
