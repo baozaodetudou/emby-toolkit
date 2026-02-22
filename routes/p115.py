@@ -145,28 +145,24 @@ def play_115_video(pick_code):
         return "115 Client Not Initialized", 500
         
     try:
-        # 1. 获取调用方的 User-Agent
-        # 115 的链接生成算法往往会绑定 UA，如果不传，默认可能用了 python-requests 的 UA
+        # 获取前端（播放器）传来的真实 UA
         ua = request.headers.get('User-Agent')
         
-        # 2. 调用接口，传入 user_agent 参数
-        # 注意：根据定义，它返回的是 P115URL 对象
+        # 调用接口时传入 UA
+        # 注意：这里根据你提供的接口定义，使用 user_agent 参数
         url_info = client.download_url(pick_code, user_agent=ua)
         
-        # 3. 这里的 url_info 可能是个对象也可能是个字符串，取决于库的实现
-        # 如果 url_info 直接就是链接字符串：
-        real_url = str(url_info) 
+        # 将 P115URL 对象转为字符串链接
+        real_url = str(url_info)
         
         if not real_url or "http" not in real_url:
-            logger.error(f"  ❌ 无法获取直链内容，返回值为: {url_info}")
             return "Cannot get video stream from 115", 404
             
-        logger.info(f"  🎬 [直链解析成功] 302 重定向中...")
+        logger.info(f"  🎬 [302 跳转] UA: {ua[:30]}... -> URL: {real_url[:50]}...")
         
-        # 4. 关键：有些 115 链接要求 Header 必须一致
-        # 我们返回给播放器时，最好让它知道我们也拿到了这个链接
+        # 返回 302 重定向
         return redirect(real_url, code=302)
         
     except Exception as e:
-        logger.error(f"  ❌ 直链解析异常: {e}")
+        logger.error(f"  ❌ 解析失败: {e}")
         return str(e), 500

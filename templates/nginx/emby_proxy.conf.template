@@ -35,8 +35,20 @@ server {
     # ★★★ 规则 1：【条件化】转发所有视频流请求 ★★★
     # 如果设置了 REDIRECT_UPSTREAM，此规则块将生效。
     # 它会捕获所有主流视频格式、转码流和 .strm 文件，并因为位置靠前而被优先匹配。
+    # ★★★ 增强版：处理 302 视频流转发 ★★★
     {% if REDIRECT_UPSTREAM %}
     location ~* (\.strm$|\.(mkv|mp4|ts|avi|iso|mov|webm|flv)$|/videos/.*stream) {
+        # 1. 必须透传真实 UA，否则 115 会校验失败
+        proxy_set_header User-Agent $http_user_agent;
+        
+        # 2. 显式透传其他关键信息
+        proxy_set_header Range $http_range;
+        proxy_set_header Connection "";
+        
+        # 3. 核心：防止 Nginx 自动处理重定向，直接把 302 扔给客户端
+        proxy_intercept_errors off;
+        proxy_redirect off;
+
         proxy_pass http://redirect_service;
     }
     {% endif %}
