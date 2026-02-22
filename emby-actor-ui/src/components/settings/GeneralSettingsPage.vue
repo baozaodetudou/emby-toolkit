@@ -359,6 +359,15 @@
                             <template #unchecked>仅转存</template>
                         </n-switch>
                     </n-form-item>
+                    <n-form-item label="联动删除网盘文件" path="p115_enable_sync_delete">
+                        <n-switch v-model:value="configModel.p115_enable_sync_delete">
+                            <template #checked>销毁网盘源文件</template>
+                            <template #unchecked>仅移除本地缓存</template>
+                        </n-switch>
+                        <template #feedback>
+                            <n-text depth="3" style="font-size:0.8em;">开启后，通过反代端口在 Emby 中删除媒体时，将同时触发 115 网盘上的物理删除。<strong style="color:#d03050; margin-left:4px;">高危操作，手抖党慎开！</strong></n-text>
+                        </template>
+                    </n-form-item>
                   </n-card>
                 </n-gi>
 
