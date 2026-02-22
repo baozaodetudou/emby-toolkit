@@ -291,6 +291,21 @@
                         </n-text>
                       </template>
                     </n-form-item>
+                    <n-form-item label="需要整理的扩展名" path="p115_extensions">
+                      <n-select
+                        v-model:value="configModel.p115_extensions"
+                        multiple
+                        filterable
+                        tag
+                        placeholder="输入扩展名并回车 (如 mkv)"
+                        :options="[]" 
+                      />
+                      <template #feedback>
+                        <n-text depth="3" style="font-size:0.8em;">
+                          只有包含在列表中的文件类型才会被整理。
+                        </n-text>
+                      </template>
+                    </n-form-item>
                     <n-form-item label="批量修正 STRM" path="">
                         <n-button @click="handleFixStrm" :loading="isFixingStrm" type="warning" ghost>
                             一键更新本地所有 STRM 链接
