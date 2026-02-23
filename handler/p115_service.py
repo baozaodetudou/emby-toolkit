@@ -1487,7 +1487,7 @@ def task_full_sync_strm_and_subs(processor=None):
                 
         logger.info(f"  ✅ [{category_rel_path}] 同步完成，处理文件: {files_generated}")
 
-    update_progress(100, "=== 全量 STRM 与字幕同步完美结束 ===")
+    update_progress(100, "=== 全量 STRM 与字幕同步结束 ===")
 
 def sync_delete_from_local_path(local_path, is_directory):
     """
