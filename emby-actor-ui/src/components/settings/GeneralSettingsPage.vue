@@ -328,9 +328,9 @@
                 <!-- 中间：路径配置 -->
                 <n-gi>
                   <n-card :bordered="false" class="dashboard-card" style="height: 100%;">
-                    <template #header><span class="card-title">整理与直链配置</span></template>
+                    <template #header><span class="card-title">整理与路径</span></template>
                     
-                    <n-form-item label="待整理目录 (入库区)" path="p115_save_path_cid">
+                    <n-form-item label="待整理目录" path="p115_save_path_cid">
                       <n-input-group>
                         <n-input 
                           :value="configModel.p115_save_path_name || configModel.p115_save_path_cid" 
@@ -346,7 +346,7 @@
                       </template>
                     </n-form-item>
 
-                    <n-form-item label="网盘媒体库根目录 (目标区)" path="p115_media_root_cid">
+                    <n-form-item label="网盘媒体库根目录" path="p115_media_root_cid">
                       <n-input-group>
                         <n-input 
                           :value="configModel.p115_media_root_name || configModel.p115_media_root_cid" 
@@ -365,7 +365,7 @@
                     <n-form-item label="本地 STRM 根目录" path="local_strm_root">
                         <n-input v-model:value="configModel.local_strm_root" placeholder="例如: /mnt/media" />
                         <template #feedback>
-                            <n-text depth="3" style="font-size:0.8em;">ETK 自动在此目录生成与网盘对应的 .strm 文件，供 Emby 扫描</n-text>
+                            <n-text depth="3" style="font-size:0.8em;">ETK 自动在此目录生成与网盘对应的 .strm 文件</n-text>
                         </template>
                     </n-form-item>
 
@@ -381,7 +381,7 @@
                             <template #unchecked>跳过字幕</template>
                         </n-switch>
                         <template #feedback>
-                            <n-text depth="3" style="font-size:0.8em;">开启后，整理或全量生成 STRM 时会自动将 115 上的字幕文件真实下载到本地同级目录。</n-text>
+                            <n-text depth="3" style="font-size:0.8em;">整理或全量生成 STRM 时会自动将 115 上的字幕文件下载到本地同级目录。</n-text>
                         </template>
                     </n-form-item>
                     <n-form-item label="全量同步时清理本地" path="p115_local_cleanup">
@@ -390,16 +390,16 @@
                             <template #unchecked>保留本地文件</template>
                         </n-switch>
                         <template #feedback>
-                            <n-text depth="3" style="font-size:0.8em;">开启后，全量生成 STRM 时，会自动删除本地存在但网盘已不存在的 .strm 和字幕文件。</n-text>
+                            <n-text depth="3" style="font-size:0.8em;">全量生成 STRM 时，会自动删除本地存在但网盘已不存在的 .strm 和字幕文件。</n-text>
                         </template>
                     </n-form-item>
                     <n-form-item label="联动删除网盘文件" path="p115_enable_sync_delete">
                         <n-switch v-model:value="configModel.p115_enable_sync_delete">
-                            <template #checked>销毁网盘源文件</template>
+                            <template #checked>删除网盘源文件</template>
                             <template #unchecked>仅移除本地缓存</template>
                         </n-switch>
                         <template #feedback>
-                            <n-text depth="3" style="font-size:0.8em;">开启后，在 Emby 中删除媒体时，将同时触发 115 网盘上的物理删除。<strong style="color:#d03050; margin-left:4px;">高危操作，手抖党慎开！</strong></n-text>
+                            <n-text depth="3" style="font-size:0.8em;">在 Emby 中删除媒体时，将同时触发 115 网盘上的文件删除。<strong style="color:#d03050; margin-left:4px;">高危操作，手抖党慎开！</strong></n-text>
                         </template>
                     </n-form-item>
                   </n-card>
