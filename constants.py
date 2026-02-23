@@ -57,6 +57,7 @@ CONFIG_OPTION_115_MEDIA_ROOT_CID = "p115_media_root_cid"       # 115网盘媒体
 CONFIG_OPTION_LOCAL_STRM_ROOT = "local_strm_root"              # 本地生成.strm的根目录
 CONFIG_OPTION_ETK_SERVER_URL = "etk_server_url"                # ETK服务器地址 (用于strm文件内)
 CONFIG_OPTION_115_ENABLE_SYNC_DELETE = "p115_enable_sync_delete" # 是否联动删除网盘文件
+CONFIG_OPTION_115_DOWNLOAD_SUBS = "p115_download_subs"         # 是否下载字幕文件
 
 # ==============================================================================
 # ✨ 通知服务 (Notification Services)

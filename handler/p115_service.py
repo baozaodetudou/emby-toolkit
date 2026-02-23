@@ -879,25 +879,31 @@ class SmartOrganizer:
                             logger.info(f"  📝 STRM 已生成 -> {strm_filename}")
                             
                         elif is_sub:
-                            # 处理字幕 -> 真实下载到本地供 Emby 挂载
-                            sub_filepath = os.path.join(local_dir, new_filename)
-                            if not os.path.exists(sub_filepath):
-                                try:
-                                    logger.info(f"  ⬇️ [字幕下载] 正在向 115 拉取外挂字幕: {new_filename} ...")
-                                    # 索取直链
-                                    url_obj = self.client.download_url(pick_code, user_agent="Mozilla/5.0")
-                                    dl_url = str(url_obj)
-                                    if dl_url:
-                                        # 使用 requests 串流下载文件
-                                        import requests
-                                        resp = requests.get(dl_url, stream=True, timeout=30)
-                                        resp.raise_for_status()
-                                        with open(sub_filepath, 'wb') as f:
-                                            for chunk in resp.iter_content(chunk_size=8192):
-                                                f.write(chunk)
-                                        logger.info(f"  ✅ [字幕下载] 下载完成！")
-                                except Exception as e:
-                                    logger.error(f"  ❌ 下载字幕失败: {e}")
+                            # 检查是否开启了字幕下载开关
+                            if config.get(constants.CONFIG_OPTION_115_DOWNLOAD_SUBS, True):
+                                # 处理字幕 -> 真实下载到本地供 Emby 挂载
+                                sub_filepath = os.path.join(local_dir, new_filename)
+                                if not os.path.exists(sub_filepath):
+                                    try:
+                                        logger.info(f"  ⬇️ [字幕下载] 正在向 115 拉取外挂字幕: {new_filename} ...")
+                                        # 索取直链
+                                        url_obj = self.client.download_url(pick_code, user_agent="Mozilla/5.0")
+                                        dl_url = str(url_obj)
+                                        if dl_url:
+                                            import requests
+                                            # ★ 修复 403：必须带上伪装的 UA 和 115 的 Cookie
+                                            headers = {
+                                                "User-Agent": "Mozilla/5.0",
+                                                "Cookie": self.get_cookies()
+                                            }
+                                            resp = requests.get(dl_url, stream=True, timeout=30, headers=headers)
+                                            resp.raise_for_status()
+                                            with open(sub_filepath, 'wb') as f:
+                                                for chunk in resp.iter_content(chunk_size=8192):
+                                                    f.write(chunk)
+                                            logger.info(f"  ✅ [字幕下载] 下载完成！")
+                                    except Exception as e:
+                                        logger.error(f"  ❌ 下载字幕失败: {e}")
                         
                     except Exception as e:
                         logger.error(f"  ❌ 生成 STRM 文件失败: {e}", exc_info=True)
@@ -1289,6 +1295,7 @@ def task_full_sync_strm_and_subs(processor=None):
     local_root = config.get(constants.CONFIG_OPTION_LOCAL_STRM_ROOT)
     etk_url = config.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "").rstrip('/')
     media_root_cid = str(config.get(constants.CONFIG_OPTION_115_MEDIA_ROOT_CID, '0'))
+    download_subs = config.get(constants.CONFIG_OPTION_115_DOWNLOAD_SUBS, True)
     
     known_video_exts = {'mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts', 'flv', 'mpg'}
     known_sub_exts = {'srt', 'ass', 'ssa', 'sub', 'vtt', 'sup'}
@@ -1383,20 +1390,26 @@ def task_full_sync_strm_and_subs(processor=None):
             files_generated += 1
                 
         elif ext in known_sub_exts:
-            sub_path = os.path.join(current_local_path, name)
-            if not os.path.exists(sub_path):
-                try:
-                    import requests
-                    url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
-                    if url_obj:
-                        resp = requests.get(str(url_obj), stream=True, timeout=15)
-                        resp.raise_for_status()
-                        with open(sub_path, 'wb') as f:
-                            for chunk in resp.iter_content(8192): f.write(chunk)
-                        logger.debug(f"补齐字幕: {name}")
-                    files_generated += 1
-                except Exception as e:
-                    logger.error(f"下载字幕失败 [{name}]: {e}")
+            # 检查开关
+            if download_subs:
+                sub_path = os.path.join(current_local_path, name)
+                if not os.path.exists(sub_path):
+                    try:
+                        import requests
+                        url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
+                        if url_obj:
+                            headers = {
+                                "User-Agent": "Mozilla/5.0",
+                                "Cookie": P115Service.get_cookies()
+                            }
+                            resp = requests.get(str(url_obj), stream=True, timeout=15, headers=headers)
+                            resp.raise_for_status()
+                            with open(sub_path, 'wb') as f:
+                                for chunk in resp.iter_content(8192): f.write(chunk)
+                            logger.debug(f"补齐字幕: {name}")
+                        files_generated += 1
+                    except Exception as e:
+                        logger.error(f"下载字幕失败 [{name}]: {e}")
 
     # ==========================================
     # 2. 遍历执行

@@ -374,6 +374,15 @@
                             <template #unchecked>仅转存</template>
                         </n-switch>
                     </n-form-item>
+                    <n-form-item label="同步下载字幕" path="p115_download_subs">
+                        <n-switch v-model:value="configModel.p115_download_subs">
+                            <template #checked>下载到本地</template>
+                            <template #unchecked>跳过字幕</template>
+                        </n-switch>
+                        <template #feedback>
+                            <n-text depth="3" style="font-size:0.8em;">开启后，整理或全量生成 STRM 时会自动将 115 上的字幕文件真实下载到本地同级目录。</n-text>
+                        </template>
+                    </n-form-item>
                     <n-form-item label="联动删除网盘文件" path="p115_enable_sync_delete">
                         <n-switch v-model:value="configModel.p115_enable_sync_delete">
                             <template #checked>销毁网盘源文件</template>
