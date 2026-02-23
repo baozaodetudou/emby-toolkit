@@ -786,7 +786,7 @@ def proxy_all(path):
         # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (复刻 CMS 核心逻辑) ★★★
         # 当客户端请求视频流时，反代层主动查询文件路径并剥离 115 直链！
         # ====================================================================
-        if '/videos/' in full_path and ('/stream' in full_path or '/original' in full_path or 'PlaybackInfo' in full_path):
+        if ('/videos/' in full_path or '/Items/' in full_path) and ('/stream' in full_path or '/original' in full_path or 'PlaybackInfo' in full_path):
             try:
                 # 1. 抓取请求流的项目 ID
                 item_id_match = re.search(r'/Items/([^/]+)/', full_path) or re.search(r'/videos/([^/]+)/', full_path)
