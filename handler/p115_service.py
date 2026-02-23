@@ -1419,7 +1419,8 @@ def task_full_sync_strm_and_subs(processor=None):
                 client, 
                 int(base_cid), 
                 with_ancestors=True, 
-                max_workers=2 
+                max_workers=2,
+                max_dirs=5 
             )
             
             for info in iterator:
