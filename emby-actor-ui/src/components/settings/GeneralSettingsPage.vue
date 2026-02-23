@@ -291,6 +291,14 @@
                         </n-text>
                       </template>
                     </n-form-item>
+
+                    <n-form-item label="ETK 内部访问地址" path="etk_server_url">
+                        <n-input v-model:value="configModel.etk_server_url" placeholder="http://192.168.X.X:5257" />
+                        <template #feedback>
+                            <n-text depth="3" style="font-size:0.8em;">将写入 .strm 文件中，Emby 必须能访问此地址来请求直链</n-text>
+                        </template>
+                    </n-form-item>
+
                     <n-form-item label="需要整理的扩展名" path="p115_extensions">
                       <n-select
                         v-model:value="configModel.p115_extensions"
@@ -358,13 +366,6 @@
                         <n-input v-model:value="configModel.local_strm_root" placeholder="例如: /mnt/media" />
                         <template #feedback>
                             <n-text depth="3" style="font-size:0.8em;">ETK 自动在此目录生成与网盘对应的 .strm 文件，供 Emby 扫描</n-text>
-                        </template>
-                    </n-form-item>
-
-                    <n-form-item label="ETK 内部访问地址" path="etk_server_url">
-                        <n-input v-model:value="configModel.etk_server_url" placeholder="http://192.168.X.X:5257" />
-                        <template #feedback>
-                            <n-text depth="3" style="font-size:0.8em;">将写入 .strm 文件中，Emby 必须能访问此地址来请求直链</n-text>
                         </template>
                     </n-form-item>
 
