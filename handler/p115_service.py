@@ -1426,6 +1426,11 @@ def task_full_sync_strm_and_subs(processor=None):
                     update_progress(100, "任务已被用户手动终止。")
                     return
                 
+                # 如果当前 info 本身是一个目录，跳过处理，只处理文件
+                # iter_files_with_path_skim 默认返回的是文件流，但为了保险我们显式校验 fid
+                if not info.get('fid'):
+                    continue
+
                 items_yielded += 1
                 
                 ancestors = info.get('ancestors', [])
@@ -1435,12 +1440,23 @@ def task_full_sync_strm_and_subs(processor=None):
                     found_base = False
                     for node in ancestors:
                         node_id = str(node.get('id') or node.get('cid', ''))
+                        
+                        # 找到规则中配置的根 CID
                         if node_id == str(base_cid):
                             found_base = True
                             continue
+                        
                         if found_base:
-                            rel_path_parts.append(str(node.get('name', '')))
+                            # 关键修复点：
+                            # 极速模式下，ancestors 包含了从 base_cid 往下到该文件“上一层”的所有目录
+                            # 只要 node_id 不等于文件本身的父目录 ID (parent_id/cid)，它就是合法的路径层级
+                            # 但 info 里的 parent_id 通常是可靠的
+                            rel_path_parts.append(str(node.get('name', '')).strip())
                 
+                # 再次校验：如果最后一个 path 分段和文件名完全一致（且文件名很大），通常是 115 的层级错误，剔除它
+                if rel_path_parts and rel_path_parts[-1] == (info.get('n') or info.get('name')):
+                    rel_path_parts.pop()
+
                 process_file_info(info, rel_path_parts, base_cid)
                 
         except Exception as e:
