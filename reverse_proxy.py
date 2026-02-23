@@ -786,24 +786,18 @@ def proxy_all(path):
         # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (复刻 CMS 核心逻辑) ★★★
         # 当客户端请求视频流时，反代层主动查询文件路径并剥离 115 直链！
         # ====================================================================
-        # 扩展匹配条件：包含 videos 且有 stream/playback/original/hls 等关键词
+        # 简化匹配条件：只要包含 videos 或 playback 相关的关键词就拦截
         is_stream_request = (
             '/videos/' in full_path or 
-            '/playback/' in full_path or 
-            full_path.endswith('.m3u8') or
-            'PlaybackInfo' in full_path
-        ) and (
-            '/stream' in full_path or 
-            '/original' in full_path or 
-            '/playback/' in full_path or 
-            full_path.endswith('.m3u8') or
+            '/playback/' in full_path or
+            'stream' in full_path or
             'PlaybackInfo' in full_path or
-            '/manifest' in full_path
+            '.m3u8' in full_path
         )
         
         if is_stream_request:
             try:
-                logger.info(f"  🔍 [反代拦截] 检测到视频流请求: {full_path}")
+                logger.info(f"  🔍 [反代拦截] 检测到流请求: {full_path}")
                 
                 # 1. 抓取请求流的项目 ID
                 item_id_match = re.search(r'/Items/([^/]+)/', full_path) or re.search(r'/videos/([^/]+)/', full_path)
@@ -825,6 +819,9 @@ def proxy_all(path):
                         
                         # 3. 核心判断：是 .strm 文件吗？本地能读到吗？
                         if file_path and file_path.endswith('.strm'):
+                            logger.info(f"  🔍 [反代拦截] 检测到 STRM 文件: {file_path}")
+                            logger.info(f"  🔍 [反代拦截] 容器内检查路径是否存在: {os.path.exists(file_path)}")
+                            
                             if os.path.exists(file_path):
                                 with open(file_path, 'r', encoding='utf-8') as f:
                                     strm_content = f.read().strip()
@@ -843,7 +840,7 @@ def proxy_all(path):
                                     real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                                     
                                     if real_url:
-                                        logger.info(f"  🎬 [反代拦截] 成功获取 115 直链，准备 302 重定向!")
+                                        logger.info(f"  🎬 [反代拦截] 成功获取 115 直链: {real_url[:80]}...")
                                         from flask import redirect
                                         
                                         # 如果是 PlaybackInfo 请求 (客户端起播前的嗅探)
@@ -871,9 +868,10 @@ def proxy_all(path):
                                 else:
                                     logger.warning(f"  ⚠️ [反代拦截] STRM 内容不包含 115 播放链接")
                             else:
-                                logger.warning(f"  ⚠️ [反代拦截] STRM 文件不存在: {file_path}")
+                                logger.warning(f"  ⚠️ [反代拦截] STRM 文件在容器内不存在: {file_path}")
+                                logger.warning(f"  ⚠️ [反代拦截] 请确保 .strm 文件路径在 Emby Kit 容器内可访问!")
                         else:
-                            logger.info(f"  ℹ️ [反代拦截] 非 STRM 文件，跳过拦截")
+                            logger.info(f"  ℹ️ [反代拦截] 非 STRM 文件路径，跳过拦截 (Path: {file_path})")
                     else:
                         logger.warning(f"  ⚠️ [反代拦截] 获取 Item 详情失败: {resp.status_code}")
             except Exception as e:
