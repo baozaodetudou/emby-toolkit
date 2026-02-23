@@ -795,12 +795,6 @@ def proxy_all(path):
                 auth_header = request.headers.get('X-Emby-Authorization', '').lower()
                 user_agent = request.headers.get('User-Agent', '').lower()
                 
-                is_web_client = False
-                if 'web' in client_name or 'client="emby web"' in auth_header:
-                    is_web_client = True
-                elif not client_name and not auth_header:
-                    if 'mozilla' in user_agent and 'applewebkit' in user_agent and 'infuse' not in user_agent:
-                        is_web_client = True
 
                 forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
                 forward_headers['Host'] = urlparse(base_url).netloc
@@ -813,34 +807,31 @@ def proxy_all(path):
                     data = resp.json()
                     modified = False
                     
-                    if not is_web_client:
-                        for source in data.get('MediaSources', []):
-                            strm_url = source.get('Path', '')
-                            if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
-                                # 1. 提取 pick_code
-                                pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
-                                
-                                # 2. ★★★ 老六觉醒：反代层亲自去拿 115 真实直链 ★★★
-                                player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                                client_ip = request.headers.get('X-Real-IP', request.remote_addr)
-                                real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
-                                
-                                # 3. 如果拿到了真实直链，直接塞给客户端！
-                                if real_115_cdn_url:
-                                    source['DirectStreamUrl'] = real_115_cdn_url
-                                    source['Path'] = real_115_cdn_url
-                                    source.pop('TranscodingUrl', None) # 逼迫客户端直连
-                                    source['Protocol'] = 'Http'
-                                    source['SupportsDirectPlay'] = True
-                                    source['SupportsDirectStream'] = True
-                                    source['SupportsTranscoding'] = False
-                                    modified = True
-                                
-                        if modified:
-                            logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，已将 115 真实 CDN 直链喂到嘴里！")
-                            return Response(json.dumps(data), status=200, mimetype='application/json')
-                    else:
-                        logger.info(f"  🌐 [PlaybackInfo] 识别为网页浏览器，放行原生处理 (交由服务端转码)")
+                    for source in data.get('MediaSources', []):
+                        strm_url = source.get('Path', '')
+                        if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
+                            # 1. 提取 pick_code
+                            pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
+                            
+                            # 2. ★★★ 老六觉醒：反代层亲自去拿 115 真实直链 ★★★
+                            player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
+                            client_ip = request.headers.get('X-Real-IP', request.remote_addr)
+                            real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
+                            
+                            # 3. 如果拿到了真实直链，直接塞给客户端！
+                            if real_115_cdn_url:
+                                source['DirectStreamUrl'] = real_115_cdn_url
+                                source['Path'] = real_115_cdn_url
+                                source.pop('TranscodingUrl', None) # 逼迫客户端直连
+                                source['Protocol'] = 'Http'
+                                source['SupportsDirectPlay'] = True
+                                source['SupportsDirectStream'] = True
+                                source['SupportsTranscoding'] = False
+                                modified = True
+                            
+                    if modified:
+                        logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，已将 115 真实 CDN 直链喂到嘴里！")
+                        return Response(json.dumps(data), status=200, mimetype='application/json')
                         
                 excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
                 response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
@@ -848,42 +839,6 @@ def proxy_all(path):
                 
             except Exception as e:
                 logger.error(f"  ❌ PlaybackInfo 劫持异常: {e}")
-
-        # ====================================================================
-        # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (双重保险) ★★★
-        # ====================================================================
-        if '/videos/' in full_path and re.search(r'/(stream|original)', full_path, re.IGNORECASE):
-            try:
-                item_id_match = re.search(r'/videos/([^/]+)/', full_path)
-                if item_id_match:
-                    item_id = item_id_match.group(1)
-                    base_url, api_key = _get_real_emby_url_and_key()
-                    user_id = request.args.get('UserId') or request.args.get('api_key') or "admin"
-                    
-                    pb_url = f"{base_url}/emby/Items/{item_id}/PlaybackInfo"
-                    resp = requests.get(pb_url, params={'api_key': api_key, 'UserId': user_id}, timeout=3)
-                    
-                    if resp.status_code == 200:
-                        pb_data = resp.json()
-                        sources = pb_data.get('MediaSources', [])
-                        if sources:
-                            strm_url = sources[0].get('Path', '')
-                            
-                            if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
-                                pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
-                                
-                                player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                                client_ip = request.headers.get('X-Real-IP', request.remote_addr)
-                                
-                                real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
-                                
-                                if real_url:
-                                        
-                                    logger.info(f"  🎬 [视频流拦截] 成功拦截客户端请求，下发 115 直链！")
-                                    from flask import redirect
-                                    return redirect(real_url, code=302)
-            except Exception as e:
-                logger.error(f"  ❌ 视频流拦截异常: {e}")
 
         # --- 拦截 A: 虚拟项目海报图片 ---
         if path.startswith('emby/Items/') and '/Images/Primary' in path:
