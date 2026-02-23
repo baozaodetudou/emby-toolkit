@@ -820,10 +820,11 @@ def proxy_all(path):
                             
                             # 3. 如果拿到了真实直链，直接塞给客户端！
                             if real_115_cdn_url:
+                                source['DirectStreamUrl'] = real_115_cdn_url
                                 # 欺骗 1：解决外网 HTTPS 混合内容拦截
-                                client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
-                                if client_scheme == 'https' and real_115_cdn_url.startswith('http://'):
-                                    real_115_cdn_url = real_115_cdn_url.replace('http://', 'https://', 1)
+                                # client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
+                                # if client_scheme == 'https' and real_115_cdn_url.startswith('http://'):
+                                #     real_115_cdn_url = real_115_cdn_url.replace('http://', 'https://', 1)
 
                                 # ★★★ 核心修复：防止客户端瞎拼接 URL ★★★
                                 source['Path'] = real_115_cdn_url
@@ -840,7 +841,7 @@ def proxy_all(path):
                                 source['SupportsTranscoding'] = False
                                 
                                 # 欺骗 2：解决外网码率限制导致的强行转码
-                                source['Bitrate'] = 1000000 
+                                # source['Bitrate'] = 1000000 
                                 
                                 modified = True
                             
