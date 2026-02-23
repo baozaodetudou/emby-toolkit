@@ -198,15 +198,11 @@ def play_115_video(pick_code):
     """
     终极极速 302 直链解析服务 (带内存缓存版)
     """
-    if request.method == 'HEAD':
-        # HEAD 请求通常是播放器嗅探，直接返回 200 或简单处理，不触发解析
-        return '', 200
-
     try:
         player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-        
+        client_ip = request.headers.get('X-Real-IP', request.remote_addr)
         # 尝试从缓存获取
-        real_url = _get_cached_115_url(pick_code, player_ua)
+        real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
         
         if not real_url:
             # 如果解析太快被拦截了，给播放器返回 429 告知稍后再试

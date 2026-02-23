@@ -82,6 +82,16 @@ server {
         proxy_pass http://emby_server;
     }
 
+    # 拦截视频流请求，交给 Python 反代剥离 115 直链
+    # 解决第三方客户端直接请求 stream 时，Emby 尝试中转导致 500 的问题
+    location ~* ^/(emby/)?videos/([^/]+)/(stream|original) {
+        proxy_pass http://virtual_library_proxy;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # 兜底规则：转发所有其他请求到真实 Emby
     location / {
         proxy_pass http://emby_server;

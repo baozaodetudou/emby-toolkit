@@ -783,13 +783,13 @@ def proxy_all(path):
         full_path = f'/{path}'
 
         # ====================================================================
-        # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (复刻 CMS 核心逻辑) ★★★
-        # 当客户端请求视频流时，反代层主动查询文件路径并剥离 115 直链！
+        # 全盘接管视频流 302 直链解析 
         # ====================================================================
-        if '/videos/' in full_path and ('/stream' in full_path or '/original' in full_path or 'PlaybackInfo' in full_path):
+        # ✅ 修正：只拦截 stream 和 original，放行 PlaybackInfo 让 Emby 原生处理
+        if '/videos/' in full_path and ('/stream' in full_path or '/original' in full_path):
             try:
-                # 1. 抓取请求流的项目 ID
-                item_id_match = re.search(r'/Items/([^/]+)/', full_path) or re.search(r'/videos/([^/]+)/', full_path)
+                # ✅ 修正：精准提取 item_id
+                item_id_match = re.search(r'/videos/([^/]+)/', full_path)
                 if item_id_match:
                     item_id = item_id_match.group(1)
                     base_url, api_key = _get_real_emby_url_and_key()
@@ -808,43 +808,18 @@ def proxy_all(path):
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 strm_content = f.read().strip()
                                 
-                            # 4. 从局域网链接中提取提取码 (pick_code)
-                            # strm 格式: http://192.168.X.X:5257/api/p115/play/abc1234
                             if '/api/p115/play/' in strm_content:
                                 pick_code = strm_content.split('/play/')[-1].split('?')[0].strip()
                                 
-                                # 5. ★ 决战 115：获取直链并直接返回 302！
-                                # 注意：必须使用当前发起请求的客户端的 User-Agent，否则 115 CDN 报 403
                                 player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
                                 client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                                 
-                                # 调用内存缓存版的直链获取器
                                 real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                                 
                                 if real_url:
                                     logger.info(f"  🎬 [反代劫持] 成功拦截 Emby 流请求，下发 115 CDN 直链！")
                                     from flask import redirect
-                                    
-                                    # 如果是 PlaybackInfo 请求 (客户端起播前的嗅探)，需要特殊伪装
-                                    if 'PlaybackInfo' in full_path:
-                                         # 骗过 Emby 客户端，告诉它这是一个外部直接播放流
-                                         fake_info = {
-                                             "MediaSources": [{
-                                                 "Id": item_id,
-                                                 "Path": real_url,
-                                                 "Protocol": "Http",
-                                                 "IsInfiniteStream": False,
-                                                 "RequiresOpening": False,
-                                                 "RequiresClosing": False,
-                                                 "SupportsDirectPlay": True,
-                                                 "SupportsDirectStream": True,
-                                                 "SupportsTranscoding": False
-                                             }],
-                                             "PlaySessionId": "etk_direct_play_session"
-                                         }
-                                         return Response(json.dumps(fake_info), mimetype='application/json')
-                                    
-                                    # 真正的视频流请求，直接 302 甩出去
+                                    # ✅ 修正：直接 302 甩出去，删除原先多余的 PlaybackInfo 伪装代码
                                     return redirect(real_url, code=302)
             except Exception as e:
                 logger.error(f"  ❌ 反代拦截解析直链出错，回退原生处理: {e}")
