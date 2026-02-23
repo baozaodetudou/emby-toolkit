@@ -1407,7 +1407,7 @@ def task_full_sync_strm_and_subs(processor=None):
                             resp.raise_for_status()
                             with open(sub_path, 'wb') as f:
                                 for chunk in resp.iter_content(8192): f.write(chunk)
-                            logger.debug(f"补齐字幕: {name}")
+                            logger.info(f"下载字幕: {name}")
                         files_generated += 1
                     except Exception as e:
                         logger.error(f"下载字幕失败 [{name}]: {e}")
