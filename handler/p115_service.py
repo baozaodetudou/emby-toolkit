@@ -1573,11 +1573,15 @@ def delete_115_files_by_webhook(item_path, pickcodes):
         base_cid = P115CacheManager.get_cid_by_name(tmdb_folder_name)
         if not base_cid:
             # 缓存没命中，尝试模糊搜索兜底
-            res = client.fs_files({'search_value': tmdb_folder_name, 'limit': 10})
-            for item in res.get('data', []):
-                if item.get('n') == tmdb_folder_name and not item.get('fid'):
-                    base_cid = item.get('cid')
-                    break
+            try:
+                time.sleep(1.5) # ★ 搜索接口风控极严，必须加睡眠限流
+                res = client.fs_files({'search_value': tmdb_folder_name, 'limit': 10})
+                for item in res.get('data', []):
+                    if item.get('n') == tmdb_folder_name and not item.get('fid'):
+                        base_cid = item.get('cid')
+                        break
+            except Exception as e:
+                logger.warning(f"  ⚠️ [联动删除] 模糊搜索目录 '{tmdb_folder_name}' 时被风控或报错: {e}")
 
         if not base_cid:
             logger.warning(f"  ⚠️ [联动删除] 未在 115 找到对应主目录，可能已被删除: {tmdb_folder_name}")
