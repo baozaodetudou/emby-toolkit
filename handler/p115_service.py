@@ -642,7 +642,7 @@ class SmartOrganizer:
                 return True
         return False
 
-    def execute(self, root_item, target_cid):
+    def execute(self, root_item, target_cid, delete_source=True):
         """
         执行整理：先尝试创建，失败后再查找（高效率模式），且一步到位移动
         """
@@ -912,7 +912,7 @@ class SmartOrganizer:
         # ==================================================
         # 步骤 D: 清理源目录
         # ==================================================
-        if not is_source_file and moved_count > 0:
+        if delete_source and not is_source_file and moved_count > 0:
             self.client.fs_delete([source_root_id])
             logger.info(f"  🧹 已清理空目录")
 
@@ -1085,7 +1085,7 @@ def task_scan_and_organize_115(processor=None):
     if not enable_organize:
         logger.warning("  ⚠️ 未开启智能整理开关，仅扫描不处理。")
         return
-
+    current_time = time.time()
     try:
         save_cid = int(cid_val)
         save_name = str(save_val)
@@ -1164,8 +1164,22 @@ def task_scan_and_organize_115(processor=None):
                     # 4. 归类
                     organizer = SmartOrganizer(client, tmdb_id, media_type, title)
                     target_cid = organizer.get_target_cid()
-                    if organizer.execute(item, target_cid):
+                    if organizer.execute(item, target_cid, delete_source=False):
                         processed_count += 1
+
+                        # 5. 延迟清理逻辑 (仅针对文件夹)
+                        if is_folder:
+                            update_time_str = item.get('te') or item.get('tp') or '0'
+                            try:
+                                update_time = int(update_time_str)
+                            except:
+                                update_time = current_time
+                                
+                            # ★ 只有超过 24 小时的老目录，定时任务才会去清理它 (防重启遗漏)
+                            if (current_time - update_time) > 86400:
+                                logger.info(f"  🧹 [兜底清理] 清理已过期(>24h)的残留目录: {name}")
+                                client.fs_delete([item_id])
+
                 except Exception as e:
                     logger.error(f"  ❌ 整理出错: {e}")
             else:

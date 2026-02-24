@@ -671,28 +671,26 @@ def emby_webhook():
 
                 # logger.info(f"  🚀 [MP上传] 转交 SmartOrganizer.execute 处理...")
                 # 复用 execute 逻辑
-                success = organizer.execute(real_root_item, target_cid)
+                success = organizer.execute(real_root_item, target_cid, delete_source=False)
                 
                 if success:
-                    # 强制删除 MP 临时目录
+                    # ★★★ 核心修改 2：异步延迟删除 MP 临时目录 ★★★
                     if current_parent_cid and str(current_parent_cid) != '0':
-                        try:
-                            # 检查目录创建时间，防止误删正在上传的剧集目录
-                            should_delete = True
+                        # 设置延迟时间：900秒 (15分钟)，足够 MP 传完一整季了
+                        delay_seconds = 900 
+                        logger.info(f"  ⏳ [MP上传] 整理成功，已安排在 {delay_seconds//60} 分钟后静默清理临时目录。")
+                        
+                        def _delayed_delete_temp_dir(cid):
                             try:
-                                if media_type == 'tv':
-                                    logger.info(f"  🛡️ [MP上传] 检测到是剧集，跳过立即删除临时目录，交由定时任务处理。")
-                                    should_delete = False
-                                    
-                            except Exception:
-                                pass
-
-                            if should_delete:
-                                logger.debug(f"  🧹 [MP上传] 删除临时目录")
-                                client.fs_delete([current_parent_cid])
+                                c = P115Service.get_client()
+                                if c:
+                                    logger.info(f"  🧹 [延迟清理] 正在清理 MP 临时目录 (CID: {cid})")
+                                    c.fs_delete([cid])
+                            except Exception as e:
+                                logger.warning(f"  ⚠️ 延迟清理临时目录失败: {e}")
                                 
-                        except Exception as e:
-                            logger.warning(f"  ⚠️ 清理临时目录失败: {e}")
+                        # 使用 gevent 的 spawn_later 开启异步定时炸弹
+                        spawn_later(delay_seconds, _delayed_delete_temp_dir, current_parent_cid)
 
                     return jsonify({"status": "success_organized"}), 200
                 else:
