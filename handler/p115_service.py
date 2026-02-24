@@ -599,7 +599,7 @@ class SmartOrganizer:
             time.sleep(1.5) 
             
             # limit 调大一点，防止文件过多漏掉
-            res = self.client.fs_files({'cid': cid, 'limit': 50})
+            res = self.client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
             if res.get('data'):
                 for item in res['data']:
                     # 如果是文件 (有 fid)
@@ -683,7 +683,7 @@ class SmartOrganizer:
             else:
                 # 2. 创建失败（目录已存在），尝试使用 115 的 search_value
                 try:
-                    search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 1150})
+                    search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 1150, 'record_open_time': 0, 'count_folders': 0})
                     if search_res.get('data'):
                         for item in search_res['data']:
                             if item.get('n') == std_root_name and not item.get('fid'):
@@ -701,7 +701,7 @@ class SmartOrganizer:
                     limit = 1000
                     while True:
                         try:
-                            res = self.client.fs_files({'cid': dest_parent_cid, 'limit': limit, 'offset': offset, 'type': 0})
+                            res = self.client.fs_files({'cid': dest_parent_cid, 'limit': limit, 'offset': offset, 'type': 0, 'record_open_time': 0, 'count_folders': 0})
                             data = res.get('data', [])
                             if not data: break # 翻到底了
                             
@@ -772,7 +772,7 @@ class SmartOrganizer:
                     
                     if not s_cid: # 创建失败，查找
                         try:
-                            s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 1150})
+                            s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 1150, 'record_open_time': 0, 'count_folders': 0})
                             for item in s_search.get('data', []):
                                 if item.get('n') == s_name and not item.get('fid'):
                                     s_cid = item.get('cid')
@@ -824,7 +824,7 @@ class SmartOrganizer:
                         if str(target_cid) not in self.__class__._category_path_cache:
                             try:
                                 # 极速请求一次目标目录的信息，115 会返回完整的父级链路 path
-                                dir_info = self.client.fs_files({'cid': target_cid, 'limit': 1})
+                                dir_info = self.client.fs_files({'cid': target_cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
                                 path_nodes = dir_info.get('path', [])
                                 
                                 start_idx = 0
@@ -967,7 +967,7 @@ def get_115_account_info():
 
     try:
         # 尝试列出 1 个文件，这是验证 Cookie 最快最准的方法
-        resp = client.fs_files({'limit': 1})
+        resp = client.fs_files({'limit': 1, 'record_open_time': 0, 'count_folders': 0})
 
         if not resp.get('state'):
             raise Exception("Cookie 已失效")
@@ -1094,8 +1094,12 @@ def task_scan_and_organize_115(processor=None):
         unidentified_folder_name = "未识别"
         unidentified_cid = None
         try:
-            time.sleep(1.5) # ★ 防风控：查未识别目录前先睡一下
-            search_res = client.fs_files({'cid': save_cid, 'search_value': unidentified_folder_name, 'limit': 1})
+            time.sleep(1.5)
+            # ★ 优化：纯读模式，不统计文件夹
+            search_res = client.fs_files({
+                'cid': save_cid, 'search_value': unidentified_folder_name, 'limit': 1,
+                'record_open_time': 0, 'count_folders': 0
+            })
             if search_res.get('data'):
                 for item in search_res['data']:
                     if item.get('n') == unidentified_folder_name and (item.get('ico') == 'folder' or not item.get('fid')):
@@ -1112,20 +1116,23 @@ def task_scan_and_organize_115(processor=None):
         logger.info(f"  🔍 正在扫描目录: {save_name} ...")
         
         # =================================================================
-        # ★★★ 终极防风控：带退避重试的主目录扫描 ★★★
+        # ★★★ 主目录扫描：纯读模式 + 修正排序字段 + 退避重试 ★★★
         # =================================================================
         res = {}
         for retry in range(3):
             try:
-                time.sleep(2) # 每次请求前强制休眠 2 秒
-                res = client.fs_files({'cid': save_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
-                break # 成功则跳出重试循环
+                time.sleep(2)
+                res = client.fs_files({
+                    'cid': save_cid, 'limit': 50, 'o': 'user_utime', 'asc': 0,
+                    'record_open_time': 0, 'count_folders': 0
+                })
+                break 
             except Exception as e:
                 if '405' in str(e) or 'Method Not Allowed' in str(e):
                     logger.warning(f"  ⚠️ 扫描主目录触发 115 风控拦截 (405)，休眠 5 秒后重试 ({retry+1}/3)...")
-                    time.sleep(5) # 被拦截了就多睡一会儿，让 WAF 冷静一下
+                    time.sleep(5)
                 else:
-                    raise # 其他严重错误直接抛出
+                    raise
 
         if not res.get('data'):
             logger.info(f"  📂 [{save_name}] 目录为空或获取失败。")
@@ -1147,12 +1154,16 @@ def task_scan_and_organize_115(processor=None):
 
             if is_folder:
                 # =================================================================
-                # ★★★ 终极防风控：带退避重试的子目录透视 ★★★
+                # ★★★ 子目录透视：开启 nf=1 (仅看文件夹) 极大降低负载 ★★★
                 # =================================================================
                 for retry in range(2):
                     try:
-                        time.sleep(2) # 透视前强制休眠 2 秒
-                        sub_res = client.fs_files({'cid': item.get('cid'), 'limit': 20})
+                        time.sleep(2)
+                        sub_res = client.fs_files({
+                            'cid': item.get('cid'), 'limit': 20, 
+                            'nf': 1, # ★ 核心优化：只返回文件夹，不返回文件
+                            'record_open_time': 0, 'count_folders': 0
+                        })
                         if sub_res.get('data'):
                             for sub_item in sub_res['data']:
                                 sub_name = sub_item.get('n', '')
@@ -1160,12 +1171,12 @@ def task_scan_and_organize_115(processor=None):
                                     forced_type = 'tv'
                                     break
                         peek_failed = False
-                        break # 成功跳出
+                        break
                     except Exception as e:
                         if '405' in str(e) or 'Method Not Allowed' in str(e):
                             logger.warning(f"  ⚠️ 透视目录 '{name}' 触发风控，休眠 3 秒后重试 ({retry+1}/2)...")
                             time.sleep(3)
-                            peek_failed = True # 如果最后一次还是失败，保持 True
+                            peek_failed = True
                         else:
                             peek_failed = True
                             break
@@ -1182,7 +1193,6 @@ def task_scan_and_organize_115(processor=None):
                     organizer = SmartOrganizer(client, tmdb_id, media_type, title)
                     target_cid = organizer.get_target_cid()
                     
-                    # ★ 兜底逻辑：禁止 execute 内部删除，由外部判断时间
                     if organizer.execute(item, target_cid, delete_source=False):
                         processed_count += 1
                         
@@ -1193,7 +1203,6 @@ def task_scan_and_organize_115(processor=None):
                             except:
                                 update_time = current_time
                                 
-                            # ★ 只有超过 24 小时的老目录，定时任务才会去清理它 (防重启遗漏)
                             if (current_time - update_time) > 86400:
                                 logger.info(f"  🧹 [兜底清理] 清理已过期(>24h)的残留目录: {name}")
                                 client.fs_delete([item_id])
@@ -1273,7 +1282,7 @@ def task_sync_115_directory_tree(processor=None):
 
             try:
                 # 获取数据列表
-                res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset})
+                res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
                 data = res.get('data', [])
                 
                 if not data: 
@@ -1369,7 +1378,7 @@ def task_full_sync_strm_and_subs(processor=None):
             target_cids.append(cid)
             try:
                 # 获取该目录的完整链路信息
-                dir_info = client.fs_files({'cid': cid, 'limit': 1})
+                dir_info = client.fs_files({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
                 path_nodes = dir_info.get('path', [])
                 
                 start_idx = 0
@@ -1530,7 +1539,7 @@ def task_full_sync_strm_and_subs(processor=None):
                 offset = 0
                 limit = 1000
                 while True:
-                    res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset})
+                    res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
                     data = res.get('data', [])
                     if not data: break
                     for item in data:
@@ -1616,7 +1625,7 @@ def delete_115_files_by_webhook(item_path, pickcodes):
             # 缓存没命中，尝试模糊搜索兜底
             try:
                 time.sleep(1.5) # ★ 搜索接口风控极严，必须加睡眠限流
-                res = client.fs_files({'search_value': tmdb_folder_name, 'limit': 10})
+                res = client.fs_files({'search_value': tmdb_folder_name, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                 for item in res.get('data', []):
                     if item.get('n') == tmdb_folder_name and not item.get('fid'):
                         base_cid = item.get('cid')
@@ -1634,7 +1643,7 @@ def delete_115_files_by_webhook(item_path, pickcodes):
         def scan_and_match(cid):
             try:
                 time.sleep(1.5) # ★ 强制防风控限流：每次请求间隔 1.5 秒
-                res = client.fs_files({'cid': cid, 'limit': 1000})
+                res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                 for item in res.get('data', []):
                     if item.get('fid'):
                         # 如果文件的提取码在我们要删除的列表中
@@ -1662,7 +1671,7 @@ def delete_115_files_by_webhook(item_path, pickcodes):
                 nonlocal video_count
                 try:
                     time.sleep(1.5) # ★ 强制防风控限流
-                    res = client.fs_files({'cid': cid, 'limit': 1000})
+                    res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                     for item in res.get('data', []):
                         if item.get('fid'):
                             ext = str(item.get('n', '')).split('.')[-1].lower()

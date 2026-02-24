@@ -580,7 +580,7 @@ def _standardize_115_file(client, file_item, save_cid, raw_title, tmdb_id, media
             # 检查目标文件夹是否存在
             target_dir_cid = None
             # 这里的 search 逻辑要小心，115 的搜索返回结构可能不同
-            search_res = client.fs_files({'cid': save_cid, 'search_value': std_name})
+            search_res = client.fs_files({'cid': save_cid, 'search_value': std_name, 'record_open_time': 0, 'count_folders': 0})
             if isinstance(search_res, dict) and search_res.get('data'):
                 for item in search_res['data']:
                     if item.get('n') == std_name and (item.get('ico') == 'folder' or not item.get('fid')):
@@ -636,7 +636,7 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     existing_ids = set()
     try:
         # 扫描前50个文件即可，通常新文件在最前
-        files_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
+        files_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
         if files_res.get('data'):
             for item in files_res['data']:
                 item_id = item.get('fid') or item.get('cid') 
@@ -709,7 +709,7 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
         for i in range(max_retries):
             time.sleep(3)
             try:
-                check_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
+                check_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
                 if check_res.get('data'):
                     for item in check_res['data']:
                         current_id = item.get('fid') or item.get('cid')
