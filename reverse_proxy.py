@@ -5,7 +5,7 @@ import requests
 import re
 import os
 import json
-from flask import Flask, request, Response
+from flask import Flask, request, Response, redirect, send_file
 from urllib.parse import urlparse, urlunparse
 from datetime import datetime, timedelta
 import time
@@ -786,30 +786,17 @@ def proxy_all(path):
         
         # ====================================================================
         # ★★★ 拦截 H: 视频流请求 (stream.mkv, stream.mp4, original.mp4 等) ★★★
-        # 
-        # 新方案：反代层代理 115 直链，解决跨域问题
-        # 1. 拦截视频请求
-        # 2. 调用 PlaybackInfo 获取 MediaSource
-        # 3. 提取 115 pick_code，获取真实直链
-        # 4. 反代层代理请求 115 直链并返回（解决跨域）
         # ====================================================================
         if '/videos/' in path and ('/stream.' in path or '/original.' in path):
             logger.info(f"[STREAM] 进入视频流拦截，path={path}")
             
-            # 从路径提取 item_id
             parts = path.split('/')
             item_id = parts[2] if len(parts) > 2 else ''
-            logger.info(f"[STREAM] 提取到 item_id: {item_id}")
-            
-            media_source_id = request.args.get('MediaSourceId', '')
             play_session_id = request.args.get('PlaySessionId', '')
             
-            # 尝试调用 PlaybackInfo 获取 MediaSource
             real_115_url = None
             try:
                 base_url, api_key = _get_real_emby_url_and_key()
-                
-                # 构建 PlaybackInfo 请求
                 playback_info_url = f"{base_url}/emby/Items/{item_id}/PlaybackInfo"
                 params = {
                     'api_key': api_key,
@@ -821,89 +808,29 @@ def proxy_all(path):
                 forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
                 forward_headers['Host'] = urlparse(base_url).netloc
                 
-                logger.info(f"[STREAM] 调用 PlaybackInfo: {playback_info_url}")
                 resp = requests.get(playback_info_url, params=params, headers=forward_headers, timeout=10)
                 
                 if resp.status_code == 200:
                     data = resp.json()
                     for source in data.get('MediaSources', []):
                         strm_url = source.get('Path', '')
-                        logger.info(f"[STREAM] MediaSource Path: {strm_url[:100] if strm_url else 'N/A'}")
-                        
-                        # 找到 115 直链
                         if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
                             pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
                             player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
                             client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                             real_115_url = _get_cached_115_url(pick_code, player_ua, client_ip)
-                            
-                            if real_115_url:
-                                logger.info(f"[STREAM] 获取到 115 直链: {real_115_url[:60]}...")
-                                break
-                
+                            break
             except Exception as e:
                 logger.error(f"[STREAM] 获取 115 直链失败: {e}")
             
-            # 如果获取到 115 直链，代理请求
+            # 【修复核心】如果获取到 115 直链，直接 302 重定向！不要用 Python 中转流！
+            # 这样 Infuse 等播放器会自己去连 115，完美支持拖动进度条，且不消耗服务器带宽。
             if real_115_url:
-                try:
-                    logger.info(f"[STREAM] 代理 115 直链请求...")
-                    # 使用原始请求的所有参数，但去掉 api_key（115 不需要）
-                    forward_params = {k: v for k, v in request.args.items() if k != 'api_key'}
-                    
-                    # 115 需要特定的请求头
-                    # 1. 使用原始浏览器的 User-Agent
-                    # 2. 添加 Referer 伪装成从 115 请求
-                    player_ua = request.headers.get('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-                    
-                    # 构造 115 需要的请求头
-                    headers_115 = {
-                        'User-Agent': player_ua,
-                        'Referer': 'https://www.115.com/',
-                        'Origin': 'https://www.115.com',
-                    }
-                    
-                    # 透传 Range 请求头（视频播放需要支持拖动进度条）
-                    range_header = request.headers.get('Range')
-                    if range_header:
-                        headers_115['Range'] = range_header
-                        logger.info(f"[STREAM] 透传 Range: {range_header}")
-                    
-                    # 转发请求到 115 直链
-                    resp = requests.get(real_115_url, params=forward_params, headers=headers_115, stream=True, timeout=30)
-                    
-                    logger.info(f"[STREAM] 115 返回状态码: {resp.status_code}")
-                    
-                    # 透传响应
-                    excluded_resp_headers = ['content-encoding', 'transfer-encoding', 'connection', 'access-control-allow-origin']
-                    response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
-                    
-                    # 添加 CORS 头，允许跨域
-                    response_headers.append(('Access-Control-Allow-Origin', '*'))
-                    response_headers.append(('Access-Control-Allow-Methods', 'GET, OPTIONS'))
-                    response_headers.append(('Access-Control-Allow-Headers', 'Range'))
-                    
-                    # 确保 Content-Length 和 Content-Range 正确传递
-                    if 'content-length' not in [h[0].lower() for h in response_headers]:
-                        content_length = resp.headers.get('Content-Length')
-                        if content_length:
-                            response_headers.append(('Content-Length', content_length))
-                    
-                    # 如果是 206 Partial Content，确保 Content-Range 正确
-                    if resp.status_code == 206:
-                        content_range = resp.headers.get('Content-Range')
-                        if content_range:
-                            response_headers.append(('Content-Range', content_range))
-                            logger.info(f"[STREAM] 透传 Content-Range: {content_range}")
-                    
-                    return Response(resp.iter_content(chunk_size=8192), resp.status_code, response_headers)
-                    
-                except Exception as e:
-                    logger.error(f"[STREAM] 代理 115 请求失败: {e}")
+                logger.info(f"[STREAM] 拦截到客户端视频流请求，直接 302 重定向到 115 直链")
+                return redirect(real_115_url, code=302)
             
-            # 如果获取失败，回退到原来的方式
+            # 如果获取失败，回退到原来的转发方式
             logger.info(f"[STREAM] 回退到转发模式")
-            
             target_url = f"{base_url}/{path.lstrip('/')}"
             forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
             forward_headers['Host'] = urlparse(base_url).netloc
@@ -912,39 +839,16 @@ def proxy_all(path):
             
             resp = requests.request(method=request.method, url=target_url, headers=forward_headers, params=forward_params, data=request.get_data(), timeout=10, allow_redirects=False)
             
-            logger.info(f"[STREAM] Emby 返回状态码: {resp.status_code}, Location: {resp.headers.get('Location', 'N/A')}")
-            
-            # 如果返回 302 重定向，检查是否是 115 直链
             if resp.status_code in [301, 302]:
                 redirect_url = resp.headers.get('Location', '')
-                
                 if '/api/p115/play/' in redirect_url:
                     pick_code = redirect_url.split('/play/')[-1].split('?')[0].strip()
                     player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
                     client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                     real_115_url = _get_cached_115_url(pick_code, player_ua, client_ip)
-                    
                     if real_115_url:
-                        # 代理 115 请求
-                        try:
-                            logger.info(f"[STREAM] 代理 115 直链请求...")
-                            forward_params = {k: v for k, v in request.args.items() if k != 'api_key'}
-                            forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
-                            
-                            resp = requests.get(real_115_url, params=forward_params, headers=forward_headers, stream=True, timeout=30)
-                            
-                            excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'access-control-allow-origin']
-                            response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
-                            response_headers.append(('Access-Control-Allow-Origin', '*'))
-                            response_headers.append(('Access-Control-Allow-Methods', 'GET, OPTIONS'))
-                            response_headers.append(('Access-Control-Allow-Headers', 'Range'))
-                            
-                            return Response(resp.iter_content(chunk_size=8192), resp.status_code, response_headers)
-                        except Exception as e:
-                            logger.error(f"[STREAM] 代理 115 请求失败: {e}")
-            
-            if resp.status_code >= 400:
-                logger.error(f"[STREAM] Emby 返回错误: {resp.status_code}, {resp.text[:200]}")
+                        logger.info(f"[STREAM] 拦截到 302 跳转，直接重定向到 115 直链")
+                        return redirect(real_115_url, code=302)
             
             excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
             response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
@@ -958,11 +862,8 @@ def proxy_all(path):
                 base_url, api_key = _get_real_emby_url_and_key()
                 target_url = f"{base_url}/{path.lstrip('/')}"
                 
-                # 识别客户端类型
                 client_name = request.headers.get('X-Emby-Client', '').lower()
-                auth_header = request.headers.get('X-Emby-Authorization', '').lower()
                 user_agent = request.headers.get('User-Agent', '').lower()
-                
 
                 forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
                 forward_headers['Host'] = urlparse(base_url).netloc
@@ -971,65 +872,49 @@ def proxy_all(path):
                 
                 resp = requests.request(method=request.method, url=target_url, headers=forward_headers, params=forward_params, data=request.get_data(), timeout=10)
                 
-                # 调试：打印原始响应中的 MediaSources
                 if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
                     data = resp.json()
                     modified = False
-                    
-                    # 调试日志：打印所有 MediaSource 的 Path
-                    for idx, source in enumerate(data.get('MediaSources', [])):
-                        strm_url = source.get('Path', '')
-                        logger.info(f"  🔍 [调试] MediaSource[{idx}] Path: {strm_url[:100] if strm_url else 'N/A'}...")
                         
                     for source in data.get('MediaSources', []):
                         strm_url = source.get('Path', '')
                         if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
-                            # 1. 提取 pick_code
                             pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
                             
-                            # 2. 反代层亲自去拿 115 真实直链
                             player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
                             client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                             real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                             
-                            # 3. 如果拿到了真实直链，替换路径
                             if real_115_cdn_url:
-                                logger.info(f"  🎬 获取到 115 直链: {real_115_cdn_url[:80]}...")
-                                
-                                # 检测是否为浏览器客户端 - 使用 User-Agent
+                                # 【修复核心】严格区分浏览器和本地客户端
                                 is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
+                                
+                                # 排除已知的本地播放器 (它们伪装了 UA，但可以通过 Client 或特定关键字识别)
+                                native_clients = ['androidtv', 'infuse', 'emby for ios', 'emby for android', 'emby theater', 'senplayer']
+                                if any(nc in client_name for nc in native_clients) or 'infuse' in user_agent or 'dalvik' in user_agent:
+                                    is_browser = False
+                                
                                 logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
                                 
                                 if is_browser:
-                                    # 浏览器需要同时使用 Path 和 RemoteUrl
+                                    # 只有浏览器需要劫持 PlaybackInfo (解决跨域 CORS 问题)
                                     source['RemoteUrl'] = real_115_cdn_url
                                     source['Path'] = real_115_cdn_url
                                     source['IsRemote'] = True
-                                    logger.info(f"  📤 返回给浏览器的 Path+RemoteUrl: {real_115_cdn_url[:60]}...")
+                                    source.pop('TranscodingUrl', None) 
+                                    source['Protocol'] = 'Http'
+                                    source['SupportsDirectPlay'] = True
+                                    source['SupportsDirectStream'] = True
+                                    source['SupportsTranscoding'] = False
+                                    logger.info(f"  ✅ [PlaybackInfo] 识别为浏览器，已注入 115 直链")
+                                    modified = True
                                 else:
-                                    # 客户端使用 Path 和 DirectStreamUrl
-                                    source['Path'] = real_115_cdn_url
-                                    source['IsRemote'] = True
-                                    source['DirectStreamUrl'] = real_115_cdn_url
-                                
-                                # 清理其他可能干扰的字段
-                                source.pop('TranscodingUrl', None) 
-                                
-                                source['Protocol'] = 'Http'
-                                source['SupportsDirectPlay'] = True
-                                source['SupportsDirectStream'] = True
-                                source['SupportsTranscoding'] = False
-                                
-                                logger.info(f"  ✅ PlaybackInfo 劫持完成")
-                                modified = True
+                                    # 对于 Android TV, Infuse 等本地客户端，千万不要劫持！
+                                    # 保持 Emby 原生的 .strm 逻辑，让客户端自己去请求流，然后我们在上面的拦截 H 处给它 302 重定向。
+                                    logger.info(f"  ⏭️ [PlaybackInfo] 识别为本地客户端，跳过劫持，保留原生 .strm 逻辑")
+                                    pass
                             
                     if modified:
-                        # 打印返回给客户端的完整数据（用于调试）
-                        for source in data.get('MediaSources', []):
-                            logger.info(f"  📤 返回给客户端的 Path: {source.get('Path', 'N/A')}")
-                            logger.info(f"  📤 返回给客户端的 Protocol: {source.get('Protocol', 'N/A')}")
-                            logger.info(f"  📤 返回给客户端的 IsRemote: {source.get('IsRemote', 'N/A')}")
-                        logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，已将 115 真实 CDN 直链喂到嘴里！")
                         return Response(json.dumps(data), status=200, mimetype='application/json')
                         
                 excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
