@@ -1002,23 +1002,29 @@ def proxy_all(path):
                                 is_tv_client = 'androidtv' in client_name or 'roku' in client_name or 'firetv' in client_name or 'appletv' in client_name or 'tizen' in client_name or 'webos' in client_name
                                 logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}, 是否TV: {is_tv_client}")
                                 
-                                if is_browser:
-                                    # 浏览器需要同时使用 Path 和 RemoteUrl
-                                    source['RemoteUrl'] = real_115_cdn_url
-                                    source['Path'] = real_115_cdn_url
-                                    source['IsRemote'] = True
-                                    logger.info(f"  📤 返回给浏览器的 Path+RemoteUrl: {real_115_cdn_url[:60]}...")
-                                elif is_tv_client:
-                                    # TV 客户端：使用 DirectStreamUrl + 完整支持
-                                    source['Path'] = real_115_cdn_url
-                                    source['IsRemote'] = True
-                                    source['DirectStreamUrl'] = real_115_cdn_url
-                                    # TV 客户端可能需要的额外字段
-                                    source['RequiredHttpHeaders'] = {}
-                                    source['CertificateVerification'] = 'NoVerification' if real_115_cdn_url.startswith('https://cdnfhnfile') else 'Required'
-                                    logger.info(f"  📤 返回给TV客户端: Path+DirectStreamUrl, IsRemote=True")
+                                # 对于浏览器和 TV 客户端，返回反代 URL 让视频流经过反代层
+                                # 这样可以避免跨域和直链访问问题
+                                if is_browser or is_tv_client:
+                                    # 让客户端请求反代的 stream 地址
+                                    proxy_stream_url = f"http://{request.host}/emby/videos/{item_id}/original.mp4"
+                                    # 添加必要的参数
+                                    if '?' not in proxy_stream_url:
+                                        proxy_stream_url += '?'
+                                    else:
+                                        proxy_stream_url += '&'
+                                    proxy_stream_url += f"MediaSourceId={source.get('Id', '')}&PlaySessionId={play_session_id}"
+                                    
+                                    source['Path'] = proxy_stream_url
+                                    source['IsRemote'] = False
+                                    source['DirectStreamUrl'] = proxy_stream_url
+                                    source['Protocol'] = 'Http'
+                                    source['SupportsDirectPlay'] = True
+                                    source['SupportsDirectStream'] = True
+                                    source['SupportsTranscoding'] = False
+                                    
+                                    logger.info(f"  📤 返回给{'浏览器' if is_browser else 'TV客户端'}的代理URL: {proxy_stream_url[:60]}...")
                                 else:
-                                    # 其他客户端（移动端等）使用 Path 和 DirectStreamUrl
+                                    # 其他客户端（移动端等）使用直连
                                     source['Path'] = real_115_cdn_url
                                     source['IsRemote'] = True
                                     source['DirectStreamUrl'] = real_115_cdn_url
