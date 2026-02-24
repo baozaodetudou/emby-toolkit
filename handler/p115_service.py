@@ -595,6 +595,9 @@ class SmartOrganizer:
         if depth > max_depth: return []
 
         try:
+            # ★ 修复1：增加防风控延时，防止触发阿里云 WAF 405 拦截
+            time.sleep(1.5) 
+            
             # limit 调大一点，防止文件过多漏掉
             res = self.client.fs_files({'cid': cid, 'limit': 2000})
             if res.get('data'):
@@ -1126,21 +1129,31 @@ def task_scan_and_organize_115(processor=None):
                 continue
 
             forced_type = None
+            peek_failed = False  # ★ 新增：透视失败标志位
+
             if is_folder:
                 try:
+                    # ★ 修复1：透视前强制休眠 1.5 秒，防止连续透视触发 405 风控
+                    time.sleep(1.5)
+                    
                     # 偷看一眼文件夹里面的内容 (取前20个足矣)
                     sub_res = client.fs_files({'cid': item.get('cid'), 'limit': 20})
                     if sub_res.get('data'):
                         for sub_item in sub_res['data']:
                             sub_name = sub_item.get('n', '')
                             # 只要包含 Season XX, S01, EP01, 第X季，就是电视剧
-                            # 你的截图里是 "Season 01"，这个正则能完美匹配
                             if re.search(r'(Season\s?\d+|S\d+|Ep?\d+|第\d+季)', sub_name, re.IGNORECASE):
                                 forced_type = 'tv'
                                 logger.info(f"  🕵️‍♂️ [结构探测] 目录 '{name}' 包含子项 '{sub_name}' -> 判定为 TV")
                                 break
                 except Exception as e:
-                    logger.warning(f"  ⚠️ 目录透视失败: {e}")
+                    logger.warning(f"  ⚠️ 目录透视失败 (可能触发115风控): {e}")
+                    peek_failed = True # ★ 标记透视失败
+
+            # ★ 修复2：如果透视失败，直接放弃识别，保留在原目录等待下次重试
+            if peek_failed:
+                logger.warning(f"  ⏭️ 跳过对 '{name}' 的识别，等待下次重试。")
+                continue
 
             # 3. 识别 (传入 forced_type)
             tmdb_id, media_type, title = _identify_media_enhanced(name, forced_media_type=forced_type)
