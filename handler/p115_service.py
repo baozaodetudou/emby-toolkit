@@ -814,47 +814,14 @@ class SmartOrganizer:
                                 break
                         if not category_name: category_name = "未识别"
 
-                        # 2. 拼接本地绝对路径
-                        media_root_cid = str(config.get(constants.CONFIG_OPTION_115_MEDIA_ROOT_CID, '0'))
-                        
-                        # 使用类变量做内存缓存，避免对同一个分类目录反复请求 115 接口
-                        if not hasattr(self.__class__, '_category_path_cache'):
-                            self.__class__._category_path_cache = {}
-                            
-                        if str(target_cid) not in self.__class__._category_path_cache:
-                            try:
-                                # 极速请求一次目标目录的信息，115 会返回完整的父级链路 path
-                                dir_info = self.client.fs_files({'cid': target_cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
-                                path_nodes = dir_info.get('path', [])
-                                
-                                start_idx = 0
-                                found_root = False
-                                
-                                # 在链路中寻找用户配置的“媒体库根目录”
-                                if media_root_cid == '0':
-                                    start_idx = 1 # 跳过 115 的物理根目录 "根目录"
-                                    found_root = True
-                                else:
-                                    for i, node in enumerate(path_nodes):
-                                        if str(node.get('cid')) == media_root_cid:
-                                            start_idx = i + 1 # 从根目录的下一级开始取
-                                            found_root = True
-                                            break
-                                
-                                if found_root and start_idx < len(path_nodes):
-                                    # 完美提取中间所有的层级！例如: ['动漫', '连载中', '热血']
-                                    rel_segments = [str(n.get('name')).strip() for n in path_nodes[start_idx:]]
-                                    self.__class__._category_path_cache[str(target_cid)] = os.path.join(*rel_segments)
-                                else:
-                                    # 兜底：如果层级异常，用规则里配的名称
-                                    fallback_name = next((r.get('dir_name') for r in self.rules if str(r.get('cid')) == str(target_cid)), "未识别")
-                                    self.__class__._category_path_cache[str(target_cid)] = fallback_name
-                            except Exception as e:
-                                logger.warning(f"获取目录路径层级失败: {e}")
-                                self.__class__._category_path_cache[str(target_cid)] = "未识别"
-
-                        # 拿到完美对应的相对路径 (例如: "纪录片/BBC")
-                        relative_category_path = self.__class__._category_path_cache[str(target_cid)]
+                        # ★★★ 直接从规则中获取已保存的分类路径，避免调用115 API ★★★
+                        category_rule = next((r for r in self.rules if str(r.get('cid')) == str(target_cid)), None)
+                        if category_rule and category_rule.get('category_path'):
+                            relative_category_path = category_rule.get('category_path')
+                            logger.debug(f"  ⚡ [规则缓存] 分类路径: {relative_category_path}")
+                        else:
+                            # 兜底：使用规则里配的名称
+                            relative_category_path = category_rule.get('dir_name', '未识别') if category_rule else "未识别"
 
                         # 2. 拼接本地绝对路径 (现在它和 115 网盘的层级 100% 对应了！)
                         if self.media_type == 'tv' and season_num is not None:

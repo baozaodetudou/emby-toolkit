@@ -161,6 +161,31 @@ def handle_sorting_rules():
         rules = request.json
         if not isinstance(rules, list):
             rules = []
+        
+        # ★★★ 新增：自动获取并保存分类目录的层级路径 ★★★
+        client = P115Service.get_client()
+        if client:
+            for rule in rules:
+                cid = rule.get('cid')
+                if cid and str(cid) != '0':
+                    # 如果规则中没有保存 path，则自动获取
+                    if not rule.get('category_path'):
+                        try:
+                            time.sleep(0.5) # 防风控限流
+                            dir_info = client.fs_files({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
+                            path_nodes = dir_info.get('path', [])
+                            
+                            if path_nodes and len(path_nodes) > 1:
+                                # 跳过第一个节点(根目录)，提取中间所有层级
+                                rel_segments = [str(n.get('name')).strip() for n in path_nodes[1:]]
+                                rule['category_path'] = os.path.join(*rel_segments) if rel_segments else rule.get('dir_name', '')
+                            else:
+                                rule['category_path'] = rule.get('dir_name', '')
+                            logger.info(f"  📂 已为规则 '{rule.get('name')}' 自动保存路径: {rule.get('category_path')}")
+                        except Exception as e:
+                            logger.warning(f"  ⚠️ 获取规则 '{rule.get('name')}' 路径失败: {e}")
+                            rule['category_path'] = rule.get('dir_name', '')
+        
         settings_db.save_setting(constants.DB_KEY_115_SORTING_RULES, rules)
         return jsonify({"status": "success", "message": "115 分类规则已保存"})
     
