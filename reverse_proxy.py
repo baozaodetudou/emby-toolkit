@@ -921,7 +921,8 @@ def proxy_all(path):
                                 
                                 if is_browser:
                                     # 浏览器直接转发给 Emby 服务端处理，不做劫持（115 直链存在跨域问题）
-                                    logger.info(f"  ⏭️ 浏览器，直接转发给 Emby 服务端，不做302重定向")
+                                    # logger.info(f"  ⏭️ 浏览器，直接转发给 Emby 服务端，不做302重定向")
+                                    pass
                                 else:
                                     # 对于 Android TV, Infuse 等本地客户端进行劫持
                                     # 保持 Emby 原生的 .strm 逻辑，让客户端自己去请求流，然后我们在上面的拦截 H 处给它 302 重定向。
