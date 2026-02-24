@@ -178,8 +178,6 @@ def handle_sorting_rules():
                         # 优先使用 App 接口防 405
                         payload = {'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0}
                         if hasattr(client, 'fs_files_app'):
-                            dir_info = client.fs_files_app(payload)
-                        else:
                             dir_info = client.fs_files(payload)
                             
                         path_nodes = dir_info.get('path', [])
