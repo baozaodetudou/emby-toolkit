@@ -788,21 +788,18 @@ def proxy_all(path):
         # ★★★ 拦截 H: 视频流请求 (stream.mkv, stream.mp4, original.mp4 等) ★★★
         # ====================================================================
         if '/videos/' in path and ('/stream.' in path or '/original.' in path):
-            logger.info(f"[STREAM] 进入视频流拦截，path={path}")
-            
-            # --- 新增：浏览器判定逻辑 ---
             user_agent = request.headers.get('User-Agent', '').lower()
             client_name = request.headers.get('X-Emby-Client', '').lower()
             
             is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
-            # 排除已知的本地播放器 (它们可能伪装 UA)
             native_clients = ['androidtv', 'infuse', 'emby for ios', 'emby for android', 'emby theater', 'senplayer']
             if any(nc in client_name for nc in native_clients) or 'infuse' in user_agent or 'dalvik' in user_agent:
                 is_browser = False
 
-            # 如果是浏览器，直接跳过 302 重定向逻辑，走下面的兜底转发 (进而配合 PlaybackInfo 的跨域直链)
             if is_browser:
-                logger.info(f"[STREAM] 识别为浏览器请求，跳过 302 重定向，交由后端转发/PlaybackInfo 处理")
+                logger.info(f"[STREAM] 识别为浏览器，跳过拦截逻辑，交给后续通用兜底处理")
+                # 这里不 return，也不做逻辑处理，直接让代码继续往下走，直到进入最后的兜底逻辑
+                pass
             else:
                 # 原有的 115 直链获取与 302 重定向逻辑
                 parts = path.split('/')
