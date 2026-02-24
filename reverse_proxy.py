@@ -998,7 +998,9 @@ def proxy_all(path):
                                 
                                 # 检测是否为浏览器客户端 - 使用 User-Agent
                                 is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
-                                logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
+                                # 检测是否为 TV 客户端
+                                is_tv_client = 'androidtv' in client_name or 'roku' in client_name or 'firetv' in client_name or 'appletv' in client_name or 'tizen' in client_name or 'webos' in client_name
+                                logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}, 是否TV: {is_tv_client}")
                                 
                                 if is_browser:
                                     # 浏览器需要同时使用 Path 和 RemoteUrl
@@ -1006,8 +1008,17 @@ def proxy_all(path):
                                     source['Path'] = real_115_cdn_url
                                     source['IsRemote'] = True
                                     logger.info(f"  📤 返回给浏览器的 Path+RemoteUrl: {real_115_cdn_url[:60]}...")
+                                elif is_tv_client:
+                                    # TV 客户端：使用 DirectStreamUrl + 完整支持
+                                    source['Path'] = real_115_cdn_url
+                                    source['IsRemote'] = True
+                                    source['DirectStreamUrl'] = real_115_cdn_url
+                                    # TV 客户端可能需要的额外字段
+                                    source['RequiredHttpHeaders'] = {}
+                                    source['CertificateVerification'] = 'NoVerification' if real_115_cdn_url.startswith('https://cdnfhnfile') else 'Required'
+                                    logger.info(f"  📤 返回给TV客户端: Path+DirectStreamUrl, IsRemote=True")
                                 else:
-                                    # 客户端使用 Path 和 DirectStreamUrl
+                                    # 其他客户端（移动端等）使用 Path 和 DirectStreamUrl
                                     source['Path'] = real_115_cdn_url
                                     source['IsRemote'] = True
                                     source['DirectStreamUrl'] = real_115_cdn_url
