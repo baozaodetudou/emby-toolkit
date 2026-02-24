@@ -788,6 +788,8 @@ def proxy_all(path):
         # ★★★ 拦截 H: 视频流请求 (stream.mkv, stream.mp4 等) ★★★
         # ====================================================================
         if '/videos/' in path and '/stream.' in path:
+            logger.info(f"[STREAM] 进入视频流拦截，path={path}")
+            
             # 转发到真实 Emby 获取响应
             base_url, api_key = _get_real_emby_url_and_key()
             target_url = f"{base_url}/{path.lstrip('/')}"
@@ -799,6 +801,8 @@ def proxy_all(path):
             
             resp = requests.request(method=request.method, url=target_url, headers=forward_headers, params=forward_params, data=request.get_data(), timeout=10, allow_redirects=False)
             
+            logger.info(f"[STREAM] Emby 返回状态码: {resp.status_code}, Location: {resp.headers.get('Location', 'N/A')}")
+            
             # 如果返回 302 重定向，检查是否是 115 直链
             if resp.status_code in [301, 302]:
                 redirect_url = resp.headers.get('Location', '')
@@ -808,7 +812,8 @@ def proxy_all(path):
                 if '/api/p115/play/' in redirect_url:
                     pick_code = redirect_url.split('/play/')[-1].split('?')[0].strip()
                     player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                    real_115_url = _get_cached_115_url(pick_code, player_ua)
+                    client_ip = request.headers.get('X-Real-IP', request.remote_addr)
+                    real_115_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                     
                     if real_115_url:
                         logger.info(f"[STREAM] 拦截 115 重定向: {real_115_url[:60]}...")
