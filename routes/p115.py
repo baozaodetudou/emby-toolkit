@@ -162,28 +162,56 @@ def handle_sorting_rules():
         if not isinstance(rules, list):
             rules = []
         
-        # ★★★ 新增：自动获取并保存分类目录的层级路径 ★★★
+        # ★★★ 修复：精准计算基于 p115_media_root_cid 的相对层级路径 ★★★
         client = P115Service.get_client()
         if client:
+            config = get_config()
+            # 获取用户配置的媒体库根目录 CID
+            media_root_cid = str(config.get(constants.CONFIG_OPTION_115_MEDIA_ROOT_CID, '0'))
+            
             for rule in rules:
                 cid = rule.get('cid')
                 if cid and str(cid) != '0':
-                    # 如果规则中没有保存 path，则自动获取
-                    if not rule.get('category_path'):
-                        try:
-                            time.sleep(0.5) # 防风控限流
-                            dir_info = client.fs_files({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
-                            path_nodes = dir_info.get('path', [])
+                    try:
+                        time.sleep(0.5) # 防风控限流
+                        
+                        # 优先使用 App 接口防 405
+                        payload = {'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0}
+                        if hasattr(client, 'fs_files_app'):
+                            dir_info = client.fs_files_app(payload)
+                        else:
+                            dir_info = client.fs_files(payload)
                             
-                            if path_nodes and len(path_nodes) > 1:
-                                # 跳过第一个节点(根目录)，提取中间所有层级
-                                rel_segments = [str(n.get('name')).strip() for n in path_nodes[1:]]
-                                rule['category_path'] = os.path.join(*rel_segments) if rel_segments else rule.get('dir_name', '')
-                            else:
-                                rule['category_path'] = rule.get('dir_name', '')
-                            logger.info(f"  📂 已为规则 '{rule.get('name')}' 自动保存路径: {rule.get('category_path')}")
-                        except Exception as e:
-                            logger.warning(f"  ⚠️ 获取规则 '{rule.get('name')}' 路径失败: {e}")
+                        path_nodes = dir_info.get('path', [])
+                        
+                        start_idx = 0
+                        found_root = False
+                        
+                        # 在链路中寻找“媒体库根目录”
+                        if media_root_cid == '0':
+                            start_idx = 1 # 如果没配根目录，默认跳过 115 物理“根目录”
+                            found_root = True
+                        else:
+                            for i, node in enumerate(path_nodes):
+                                if str(node.get('cid')) == media_root_cid:
+                                    start_idx = i + 1 # 从根目录的下一级开始取
+                                    found_root = True
+                                    break
+                        
+                        if found_root and start_idx < len(path_nodes):
+                            # 提取中间所有层级，例如: ['电影', '欧美电影']
+                            rel_segments = [str(n.get('name')).strip() for n in path_nodes[start_idx:]]
+                            # 强制使用 '/' 拼接，保证跨平台兼容性
+                            rule['category_path'] = "/".join(rel_segments)
+                        else:
+                            # 兜底：如果层级异常或没找到根目录，用规则里配的名称
+                            rule['category_path'] = rule.get('dir_name', '')
+                            
+                        logger.info(f"  📂 已为规则 '{rule.get('name')}' 自动计算并保存路径: {rule.get('category_path')}")
+                        
+                    except Exception as e:
+                        logger.warning(f"  ⚠️ 获取规则 '{rule.get('name')}' 路径失败: {e}")
+                        if not rule.get('category_path'):
                             rule['category_path'] = rule.get('dir_name', '')
         
         settings_db.save_setting(constants.DB_KEY_115_SORTING_RULES, rules)

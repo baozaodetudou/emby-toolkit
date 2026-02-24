@@ -818,9 +818,11 @@ class SmartOrganizer:
 
                         # ★★★ 直接从规则中获取已保存的分类路径，避免调用115 API ★★★
                         category_rule = next((r for r in self.rules if str(r.get('cid')) == str(target_cid)), None)
-                        if category_rule and category_rule.get('category_path'):
-                            relative_category_path = category_rule.get('category_path')
-                            logger.debug(f"  ⚡ [规则缓存] 分类路径: {relative_category_path}")
+                        
+                        # ★ 修复：使用 'category_path' in category_rule，防止空字符串 "" 被判定为 False
+                        if category_rule and 'category_path' in category_rule:
+                            relative_category_path = category_rule['category_path']
+                            logger.debug(f"  ⚡ [规则缓存] 分类路径: '{relative_category_path}'")
                         else:
                             # 兜底：使用规则里配的名称
                             relative_category_path = category_rule.get('dir_name', '未识别') if category_rule else "未识别"
@@ -1347,34 +1349,11 @@ def task_full_sync_strm_and_subs(processor=None):
         if r.get('enabled', True) and r.get('cid') and str(r['cid']) != '0':
             cid = str(r['cid'])
             target_cids.append(cid)
-            try:
-                # 获取该目录的完整链路信息
-                dir_info = client.fs_files_app({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
-                path_nodes = dir_info.get('path', [])
-                
-                start_idx = 0
-                found_root = False
-                
-                # 在链路中寻找“媒体库根目录”
-                if media_root_cid == '0':
-                    start_idx = 1 # 跳过网盘物理“根目录”
-                    found_root = True
-                else:
-                    for i, node in enumerate(path_nodes):
-                        if str(node.get('cid')) == media_root_cid:
-                            start_idx = i + 1
-                            found_root = True
-                            break
-                
-                if found_root and start_idx < len(path_nodes):
-                    # 提取中间所有层级，例如: ['电影', '欧美电影']
-                    rel_segments = [str(n.get('name')).strip() for n in path_nodes[start_idx:]]
-                    cid_to_rel_path[cid] = os.path.join(*rel_segments)
-                else:
-                    # 兜底：使用规则中配置的名称
-                    cid_to_rel_path[cid] = r.get('dir_name', '未识别')
-            except Exception as e:
-                logger.warning(f"获取 CID:{cid} 路径层级失败: {e}")
+            # ★ 核心修改：直接从规则中读取 category_path
+            if 'category_path' in r:
+                cid_to_rel_path[cid] = r['category_path']
+            else:
+                # 兜底：使用规则中配置的名称
                 cid_to_rel_path[cid] = r.get('dir_name', '未识别')
 
     valid_local_files = set() # 本地已存在的 STRM 和字幕文件绝对路径集合（仅当 enable_cleanup=True 时使用）
