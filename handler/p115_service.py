@@ -887,8 +887,7 @@ class SmartOrganizer:
                                     try:
                                         logger.info(f"  ⬇️ [字幕下载] 正在向 115 拉取外挂字幕: {new_filename} ...")
                                         # 索取直链
-                                        # ★★★ 修复：优先使用 GET 方法的 web 接口 ★★★
-                                        url_obj = self.client.download_url_web(pick_code, user_agent="Mozilla/5.0")
+                                        url_obj = self.client.download_url(pick_code, user_agent="Mozilla/5.0")
                                         dl_url = str(url_obj)
                                         if dl_url:
                                             import requests
@@ -1403,8 +1402,7 @@ def task_full_sync_strm_and_subs(processor=None):
                 if not os.path.exists(sub_path):
                     try:
                         import requests
-                        # ★★★ 修复：优先使用 GET 方法的 web 接口 ★★★
-                        url_obj = client.download_url_web(pc, user_agent="Mozilla/5.0")
+                        url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
                         if url_obj:
                             headers = {
                                 "User-Agent": "Mozilla/5.0",

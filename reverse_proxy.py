@@ -998,72 +998,27 @@ def proxy_all(path):
                                 
                                 # 检测是否为浏览器客户端 - 使用 User-Agent
                                 is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
-                                # 检测是否为 TV 客户端
-                                is_tv_client = 'androidtv' in client_name or 'roku' in client_name or 'firetv' in client_name or 'appletv' in client_name or 'tizen' in client_name or 'webos' in client_name
-                                logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}, 是否TV: {is_tv_client}")
-                                
-                                # 获取客户端 IP
-                                client_ip = request.headers.get('X-Real-IP') or request.remote_addr
-                                # 检测是否为内网 IP
-                                is_internal_ip = client_ip.startswith(('10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '127.'))
-                                logger.info(f"  🔍 客户端 IP: {client_ip}, 是否内网: {is_internal_ip}")
+                                logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
                                 
                                 if is_browser:
-                                    # 浏览器：返回反代 URL 让视频流经过反代层（解决跨域）
-                                    proxy_stream_url = f"http://{request.host}/emby/videos/{item_id}/original.mp4"
-                                    if '?' not in proxy_stream_url:
-                                        proxy_stream_url += '?'
-                                    else:
-                                        proxy_stream_url += '&'
-                                    proxy_stream_url += f"MediaSourceId={source.get('Id', '')}&PlaySessionId={play_session_id}"
-                                    
-                                    source['Path'] = proxy_stream_url
-                                    source['IsRemote'] = False
-                                    source['DirectStreamUrl'] = proxy_stream_url
-                                    source['Protocol'] = 'Http'
-                                    source['SupportsDirectPlay'] = True
-                                    source['SupportsDirectStream'] = True
-                                    source['SupportsTranscoding'] = False
-                                    
-                                    logger.info(f"  📤 返回给浏览器的代理URL: {proxy_stream_url[:60]}...")
+                                    # 浏览器需要同时使用 Path 和 RemoteUrl
+                                    source['RemoteUrl'] = real_115_cdn_url
+                                    source['Path'] = real_115_cdn_url
+                                    source['IsRemote'] = True
+                                    logger.info(f"  📤 返回给浏览器的 Path+RemoteUrl: {real_115_cdn_url[:60]}...")
                                 else:
-                                    # 非浏览器客户端（TV、手机等）：返回 115 直链
-                                    # 内网 IP：直接返回 115 直链
-                                    # 公网 IP：如果配置了公网 URL，则返回公网 URL
-                                    
-                                    etk_public_url = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_ETK_PUBLIC_URL, '').rstrip('/')
-                                    etk_server_url = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_ETK_SERVER_URL, '').rstrip('/')
-                                    
-                                    if is_internal_ip or not etk_public_url:
-                                        # 内网或没有配置公网 URL：直接返回 115 直链
-                                        source['Path'] = real_115_cdn_url
-                                        source['IsRemote'] = True
-                                        source['DirectStreamUrl'] = real_115_cdn_url
-                                        source['Protocol'] = 'Http'
-                                        source['SupportsDirectPlay'] = True
-                                        source['SupportsDirectStream'] = True
-                                        source['SupportsTranscoding'] = False
-                                        
-                                        logger.info(f"  📤 返回给{'TV' if is_tv_client else '其他客户端'}的115直链: {real_115_cdn_url[:60]}...")
-                                    else:
-                                        # 公网：用公网 URL 替换内网 IP
-                                        # 替换 URL 中的内网 IP 为公网 URL
-                                        public_stream_url = real_115_cdn_url.replace(etk_server_url, etk_public_url)
-                                        public_stream_url = public_stream_url.replace(etk_server_url.replace('https://', 'http://'), etk_public_url)
-                                        public_stream_url = public_stream_url.replace(etk_server_url.replace('http://', 'https://'), etk_public_url)
-                                        
-                                        source['Path'] = public_stream_url
-                                        source['IsRemote'] = True
-                                        source['DirectStreamUrl'] = public_stream_url
-                                        source['Protocol'] = 'Http'
-                                        source['SupportsDirectPlay'] = True
-                                        source['SupportsDirectStream'] = True
-                                        source['SupportsTranscoding'] = False
-                                        
-                                        logger.info(f"  📤 返回给{'TV' if is_tv_client else '其他客户端'}的公网URL: {public_stream_url[:60]}...")
+                                    # 客户端使用 Path 和 DirectStreamUrl
+                                    source['Path'] = real_115_cdn_url
+                                    source['IsRemote'] = True
+                                    source['DirectStreamUrl'] = real_115_cdn_url
                                 
                                 # 清理其他可能干扰的字段
                                 source.pop('TranscodingUrl', None) 
+                                
+                                source['Protocol'] = 'Http'
+                                source['SupportsDirectPlay'] = True
+                                source['SupportsDirectStream'] = True
+                                source['SupportsTranscoding'] = False
                                 
                                 logger.info(f"  ✅ PlaybackInfo 劫持完成")
                                 modified = True
