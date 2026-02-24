@@ -873,13 +873,15 @@ def proxy_all(path):
                                 
                                 # 检测是否为浏览器客户端
                                 is_browser = 'emby web' in client_name or 'jellyfin web' in client_name
+                                logger.info(f"  🔍 客户端名称: {client_name}, 是否浏览器: {is_browser}")
                                 
                                 if is_browser:
                                     # 浏览器需要使用 RemoteUrl 字段
                                     source['RemoteUrl'] = real_115_cdn_url
                                     source['IsRemote'] = True
-                                    # 浏览器不需要 Path，但保留以防万一
-                                    source['Path'] = real_115_cdn_url
+                                    # 清空 Path，避免浏览器使用它
+                                    source['Path'] = ''
+                                    logger.info(f"  📤 返回给浏览器的 RemoteUrl: {real_115_cdn_url[:60]}...")
                                 else:
                                     # 客户端使用 Path 和 DirectStreamUrl
                                     source['Path'] = real_115_cdn_url
