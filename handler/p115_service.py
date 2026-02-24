@@ -111,12 +111,11 @@ class P115Service:
             # 如果 Cookies 变了，或者客户端还没初始化，就重新初始化
             if cls._client is None or cookies != cls._cookies_cache:
                 try:
-                    fake_headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-                    }
-                    cls._client = P115Client(cookies, headers=fake_headers)
+                    cls._client = P115Client(cookies)
+                    cls._client.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                    
                     cls._cookies_cache = cookies
-                    logger.debug("  ✅ P115Client 实例已(重新)初始化")
+                    logger.debug("  ✅ P115Client 实例已(重新)初始化 (已成功注入防风控 UA)")
                 except Exception as e:
                     logger.error(f"  ❌ P115Client 初始化失败: {e}")
                     return None
