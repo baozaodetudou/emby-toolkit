@@ -172,7 +172,7 @@ def handle_sorting_rules():
                     if not rule.get('category_path'):
                         try:
                             time.sleep(0.5) # 防风控限流
-                            dir_info = client.fs_files_app({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
+                            dir_info = client.fs_files({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
                             path_nodes = dir_info.get('path', [])
                             
                             if path_nodes and len(path_nodes) > 1:

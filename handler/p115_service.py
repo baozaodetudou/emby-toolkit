@@ -1112,6 +1112,8 @@ def task_scan_and_organize_115(processor=None):
 
         for item in res['data']:
             name = item.get('n')
+            if not name:
+                continue
             item_id = item.get('fid') or item.get('cid')
             is_folder = not item.get('fid')
 
