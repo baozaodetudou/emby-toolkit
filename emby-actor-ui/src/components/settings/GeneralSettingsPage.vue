@@ -297,7 +297,7 @@
                           </n-button>
                         </n-space>
                         <n-text depth="3" style="font-size:0.8em;">
-                          用于后台管理。
+                          用于网盘整理。
                         </n-text>
                       </n-space>
                     </n-form-item>
