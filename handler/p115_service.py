@@ -1439,24 +1439,27 @@ def task_sync_115_directory_tree(processor=None):
     
     rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
     
-    # 提取所有启用的规则中的目标分类目录 CID，并去重
-    target_cids = set()
+    # ★★★ 核心修改：使用字典存储 CID 和对应的易读名称 ★★★
+    target_dirs = {}
     for rule in rules:
         if rule.get('enabled', True) and rule.get('cid'):
             cid_str = str(rule['cid'])
             if cid_str and cid_str != '0':
-                target_cids.add(cid_str)
+                # 优先使用完整层级路径，其次是目录名，最后是规则名
+                display_name = rule.get('category_path') or rule.get('dir_name') or rule.get('name') or f"CID:{cid_str}"
+                target_dirs[cid_str] = display_name
 
-    if not target_cids:
+    if not target_dirs:
         update_progress(100, "未找到有效的分类目标目录 CID，任务结束。")
         return
 
     total_cached = 0
-    total_cids = len(target_cids)
+    total_cids = len(target_dirs)
     
-    for idx, cid in enumerate(target_cids):
+    # ★★★ 遍历字典，获取 CID 和 名称 ★★★
+    for idx, (cid, dir_name) in enumerate(target_dirs.items()):
         base_prog = int((idx / total_cids) * 100)
-        update_progress(base_prog, f"  🔍 正在扫描第 {idx+1}/{total_cids} 个分类目录 (CID: {cid})...")
+        update_progress(base_prog, f"  🔍 正在扫描第 {idx+1}/{total_cids} 个分类目录: [{dir_name}] ...")
         
         offset = 0
         limit = 1000
@@ -1482,7 +1485,6 @@ def task_sync_115_directory_tree(processor=None):
                 with get_db_connection() as conn:
                     with conn.cursor() as cursor:
                         for item in data:
-                            # 兼容 OpenAPI 键名
                             fc_val = item.get('fc') if item.get('fc') is not None else item.get('type')
                             if str(fc_val) == '0':
                                 sub_cid = item.get('fid') or item.get('file_id')
@@ -1498,17 +1500,17 @@ def task_sync_115_directory_tree(processor=None):
                                     dir_count_in_page += 1
                         conn.commit()
                 
-                # 实时播报当前正在翻第几页，以及入库了多少个文件夹
-                update_progress(base_prog, f"  ➜ CID: {cid} | 翻阅第 {page_count} 页 | 新增/更新 {dir_count_in_page} 个目录...")
+                # ★★★ 日志打印易读的目录名称 ★★★
+                update_progress(base_prog, f"  ➜ [{dir_name}] | 翻阅第 {page_count} 页 | 新增/更新 {dir_count_in_page} 个目录...")
                 
-                # ★ 性能优化：如果获取的数据小于请求的上限，说明到底了，不用再请求下一页
+                # 性能优化：如果获取的数据小于请求的上限，说明到底了，不用再请求下一页
                 if len(data) < limit:
                     break
                     
                 offset += limit
                 
             except Exception as e:
-                logger.error(f"  ❌ 同步目录树异常 (CID: {cid}): {e}")
+                logger.error(f"  ❌ 同步目录树异常 [{dir_name}]: {e}")
                 break # 发生异常，跳过这个 CID 继续查下一个
 
     update_progress(100, f"=== 同步结束！共成功更新 {total_cached} 个目录的缓存 ===")
