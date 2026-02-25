@@ -260,67 +260,80 @@ class P115Service:
                 if not self._openapi:
                     raise Exception("未配置 115 Token (OpenAPI)，无法执行管理操作")
 
+            def _rate_limit(self):
+                """★ 核心升级：底层统一 API 流控拦截器 ★"""
+                with P115Service._lock:
+                    try:
+                        # 默认 0.5 秒请求一次 (即 2 QPS)，对 OpenAPI 来说非常安全且高效
+                        interval = float(get_config().get(constants.CONFIG_OPTION_115_INTERVAL, 0.5))
+                    except (ValueError, TypeError):
+                        interval = 0.5
+                    
+                    current_time = time.time()
+                    elapsed = current_time - P115Service._last_request_time
+                    if elapsed < interval:
+                        time.sleep(interval - elapsed)
+                    P115Service._last_request_time = time.time()
+
             def get_user_info(self):
+                self._rate_limit()
                 if self._openapi: return self._openapi.get_user_info()
                 if self._cookie: return self._cookie.get_user_info()
                 return None
 
             def fs_files(self, payload):
                 self._check_openapi()
+                self._rate_limit()
                 return self._openapi.fs_files(payload)
 
             def fs_files_app(self, payload):
                 self._check_openapi()
+                self._rate_limit()
                 return self._openapi.fs_files_app(payload)
 
             def fs_mkdir(self, name, pid):
                 self._check_openapi()
+                self._rate_limit()
                 return self._openapi.fs_mkdir(name, pid)
 
             def fs_move(self, fid, to_cid):
                 self._check_openapi()
+                self._rate_limit()
                 return self._openapi.fs_move(fid, to_cid)
 
             def fs_rename(self, fid_name_tuple):
                 self._check_openapi()
+                self._rate_limit()
                 return self._openapi.fs_rename(fid_name_tuple)
 
             def fs_delete(self, fids):
                 self._check_openapi()
+                self._rate_limit()
                 return self._openapi.fs_delete(fids)
 
             def download_url(self, pick_code, user_agent=None):
+                self._rate_limit()
                 if not self._cookie:
                     raise Exception("未配置 115 Cookie，无法获取播放直链")
                 return self._cookie.download_url(pick_code, user_agent)
-            
+
             def request(self, *args, **kwargs):
+                self._rate_limit()
                 if not self._cookie:
                     raise Exception("未配置 115 Cookie，无法执行网络请求")
                 return self._cookie.request(*args, **kwargs)
 
             def offline_add_urls(self, payload):
+                self._rate_limit()
                 if not self._cookie:
                     raise Exception("未配置 115 Cookie，无法执行离线下载")
                 return self._cookie.offline_add_urls(payload)
 
             def share_import(self, share_code, receive_code, cid):
+                self._rate_limit()
                 if not self._cookie:
                     raise Exception("未配置 115 Cookie，无法执行转存")
                 return self._cookie.share_import(share_code, receive_code, cid)
-
-        # 全局限流逻辑
-        with cls._lock:
-            try:
-                interval = float(get_config().get(constants.CONFIG_OPTION_115_INTERVAL, 5.0))
-            except (ValueError, TypeError):
-                interval = 5.0
-            
-            current_time = time.time()
-            elapsed = current_time - cls._last_request_time
-            if elapsed < interval:
-                time.sleep(interval - elapsed)
-            cls._last_request_time = time.time()
 
         return StrictSplitClient(openapi, cookie)
     
@@ -825,7 +838,6 @@ class SmartOrganizer:
         all_files = []
         if depth > max_depth: return []
         try:
-            time.sleep(1.5) 
             res = self.client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
             if res.get('data'):
                 for item in res['data']:
@@ -1305,7 +1317,6 @@ def task_scan_and_organize_115(processor=None):
         unidentified_folder_name = "未识别"
         unidentified_cid = None
         try:
-            time.sleep(1.5)
             # ★ 优化：纯读模式，不统计文件夹
             search_res = client.fs_files({
                 'cid': save_cid, 'search_value': unidentified_folder_name, 'limit': 1,
@@ -1332,7 +1343,6 @@ def task_scan_and_organize_115(processor=None):
         res = {}
         for retry in range(3):
             try:
-                time.sleep(2)
                 res = client.fs_files({
                     'cid': save_cid, 'limit': 50, 'o': 'user_utime', 'asc': 0,
                     'record_open_time': 0, 'count_folders': 0
@@ -1341,7 +1351,6 @@ def task_scan_and_organize_115(processor=None):
             except Exception as e:
                 if '405' in str(e) or 'Method Not Allowed' in str(e):
                     logger.warning(f"  ⚠️ 扫描主目录触发 115 风控拦截 (405)，休眠 5 秒后重试 ({retry+1}/3)...")
-                    time.sleep(5)
                 else:
                     raise
 
@@ -1372,7 +1381,6 @@ def task_scan_and_organize_115(processor=None):
                 # =================================================================
                 for retry in range(2):
                     try:
-                        time.sleep(2)
                         sub_res = client.fs_files({
                             'cid': item_id, 'limit': 20, # ★ 修复1: 使用 item_id 作为目标目录
                             'record_open_time': 0, 'count_folders': 0
@@ -1390,7 +1398,6 @@ def task_scan_and_organize_115(processor=None):
                     except Exception as e:
                         if '405' in str(e) or 'Method Not Allowed' in str(e):
                             logger.warning(f"  ⚠️ 透视目录 '{name}' 触发风控，休眠 3 秒后重试 ({retry+1}/2)...")
-                            time.sleep(3)
                             peek_failed = True
                         else:
                             peek_failed = True
@@ -1533,7 +1540,6 @@ def task_sync_115_directory_tree(processor=None):
                     break
                     
                 offset += limit
-                time.sleep(1) # 稍微喘口气，防 115 踢人
                 
             except Exception as e:
                 logger.error(f"  ❌ 同步目录树异常 (CID: {cid}): {e}")
@@ -1855,7 +1861,6 @@ def delete_115_files_by_webhook(item_path, pickcodes):
         if not base_cid:
             # 缓存没命中，尝试模糊搜索兜底
             try:
-                time.sleep(1.5) # ★ 搜索接口风控极严，必须加睡眠限流
                 res = client.fs_files({'search_value': tmdb_folder_name, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                 for item in res.get('data', []):
                     if item.get('fn') == tmdb_folder_name and str(item.get('fc')) == '0':
@@ -1873,7 +1878,6 @@ def delete_115_files_by_webhook(item_path, pickcodes):
         
         def scan_and_match(cid):
             try:
-                time.sleep(1.5) # ★ 强制防风控限流：每次请求间隔 1.5 秒
                 res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                 for item in res.get('data', []):
                     if str(item.get('fc')) == '1':
@@ -1900,7 +1904,6 @@ def delete_115_files_by_webhook(item_path, pickcodes):
             def count_videos(cid):
                 nonlocal video_count
                 try:
-                    time.sleep(1.5) # ★ 强制防风控限流
                     res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                     for item in res.get('data', []):
                         if str(item.get('fc')) == '1':

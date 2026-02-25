@@ -416,8 +416,6 @@ def handle_sorting_rules():
                 cid = rule.get('cid')
                 if cid and str(cid) != '0':
                     try:
-                        time.sleep(0.5) # 防风控限流
-                        
                         payload = {'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0}
                         if hasattr(client, 'fs_files_app'):
                             dir_info = client.fs_files(payload)
