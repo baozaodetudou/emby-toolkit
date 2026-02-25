@@ -256,6 +256,13 @@ class P115Service:
                 self._openapi = openapi_client
                 self._cookie = cookie_client
 
+            # 暴露底层的原生客户端，供极速遍历工具使用
+            @property
+            def raw_client(self):
+                if self._cookie and hasattr(self._cookie, 'webapi'):
+                    return self._cookie.webapi
+                return None
+
             def _check_openapi(self):
                 if not self._openapi:
                     raise Exception("未配置 115 Token (OpenAPI)，无法执行管理操作")
@@ -1710,7 +1717,8 @@ def task_full_sync_strm_and_subs(processor=None):
     total_cids = len(target_cids)
     for idx, base_cid in enumerate(target_cids):
         base_prog = int((idx / total_cids) * 100)
-        category_rel_path = cid_to_rel_path.get(base_cid)
+        # 修复日志打印 None 的小问题
+        category_rel_path = cid_to_rel_path.get(base_cid) or "未识别"
         update_progress(base_prog, f"  ➜ 正在同步层级: {category_rel_path} (CID: {base_cid}) ...")
         
         items_yielded = 0
@@ -1720,8 +1728,13 @@ def task_full_sync_strm_and_subs(processor=None):
         try:
             from p115client.tool.iterdir import iter_files_with_path_skim
             
+            # ★★★ 核心修复：提取原生客户端喂给极速工具 ★★★
+            raw_p115_client = getattr(client, 'raw_client', None)
+            if not raw_p115_client:
+                raise Exception("无法获取底层 P115Client (可能未配置 Cookie)，极速模式不可用")
+            
             iterator = iter_files_with_path_skim(
-                client, 
+                raw_p115_client, # 使用原生客户端，绕过我们自己加的 0.5 秒限速锁
                 int(base_cid), 
                 with_ancestors=True, 
                 max_workers=1 
@@ -1753,12 +1766,10 @@ def task_full_sync_strm_and_subs(processor=None):
                             continue
                         
                         if found_base:
-                            # 修复点 1：确保这个节点不是文件本身（防止极速模式把文件当路径）
                             node_name = str(node.get('name', '')).strip()
                             if node_id != str(fid) and node_name:
                                 rel_path_parts.append(node_name)
                 
-                # 修复点 2：双重保险。如果路径最后一位跟文件名完全一样（比如 115 里的特殊打包文件），剔除它
                 file_real_name = info.get('n') or info.get('name', '')
                 if rel_path_parts and rel_path_parts[-1] == file_real_name:
                     rel_path_parts.pop()
