@@ -21,6 +21,79 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ======================================================================
+# ★★★ 终极武器：115 官方 OpenAPI 客户端 (绝对无 405) ★★★
+# ======================================================================
+class P115OpenAPIClient:
+    def __init__(self, access_token):
+        self.access_token = access_token.strip()
+        self.base_url = "https://proapi.115.com"
+        self.headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "User-Agent": "Emby-toolkit/1.0 (OpenAPI)"
+        }
+
+    def fs_files(self, payload):
+        """获取文件列表"""
+        url = f"{self.base_url}/open/ufile/files"
+        # 官方接口默认参数
+        params = {"show_dir": 1, "limit": 50, "offset": 0}
+        if isinstance(payload, dict):
+            params.update(payload)
+        
+        resp = requests.get(url, params=params, headers=self.headers).json()
+        return resp
+
+    def fs_files_app(self, payload):
+        """兼容旧代码的调用，直接转给 fs_files"""
+        return self.fs_files(payload)
+
+    def fs_mkdir(self, name, pid):
+        """创建文件夹"""
+        url = f"{self.base_url}/open/folder/add"
+        data = {"pid": str(pid), "file_name": str(name)}
+        resp = requests.post(url, data=data, headers=self.headers).json()
+        
+        # 兼容老库的返回值格式
+        if resp.get("state") and "data" in resp:
+            resp["cid"] = resp["data"].get("file_id")
+        return resp
+
+    def fs_move(self, fid, to_cid):
+        """移动文件"""
+        url = f"{self.base_url}/open/ufile/move"
+        data = {"file_ids": str(fid), "to_cid": str(to_cid)}
+        return requests.post(url, data=data, headers=self.headers).json()
+
+    def fs_rename(self, fid_name_tuple):
+        """重命名文件 (接收元组是为了兼容老库用法)"""
+        fid, new_name = fid_name_tuple
+        url = f"{self.base_url}/open/ufile/update"
+        data = {"file_id": str(fid), "file_name": str(new_name)}
+        return requests.post(url, data=data, headers=self.headers).json()
+
+    def fs_delete(self, fids):
+        """删除文件"""
+        url = f"{self.base_url}/open/ufile/delete"
+        if isinstance(fids, list):
+            fids = ",".join([str(f) for f in fids])
+        data = {"file_ids": str(fids)}
+        return requests.post(url, data=data, headers=self.headers).json()
+
+    def download_url(self, pick_code, user_agent=None):
+        """获取下载直链"""
+        url = f"{self.base_url}/open/ufile/downurl"
+        data = {"pick_code": str(pick_code)}
+        resp = requests.post(url, data=data, headers=self.headers).json()
+        
+        if resp.get("state") and resp.get("data"):
+            # 官方返回的数据结构是 {"data": {"文件ID": {"url": "真实直链"}}}
+            for k, v in resp["data"].items():
+                if isinstance(v, dict) and "url" in v:
+                    return v["url"]
+        return None
+
+
+# ======================================================================
 # ★★★ 新增：115 目录树 DB 缓存管理器 ★★★
 # ======================================================================
 class P115CacheManager:
@@ -96,29 +169,36 @@ class P115Service:
 
     @classmethod
     def get_client(cls):
-        """获取全局唯一的 P115Client 实例 (带自动重载和限流)"""
-        if P115Client is None:
-            raise ImportError("未安装 p115client")
-
-        # 获取配置
+        """获取全局唯一的 115 客户端实例 (支持 OpenAPI 和 Cookie 双模式)"""
         config = get_config()
-        cookies = config.get(constants.CONFIG_OPTION_115_COOKIES)
+        # 我们让用户把 Token 填在原来的 Cookie 输入框里
+        auth_str = config.get(constants.CONFIG_OPTION_115_COOKIES)
         
-        if not cookies:
+        if not auth_str:
             return None
 
         with cls._lock:
-            # 如果 Cookies 变了，或者客户端还没初始化，就重新初始化
-            if cls._client is None or cookies != cls._cookies_cache:
+            if cls._client is None or auth_str != cls._cookies_cache:
                 try:
-                    cls._client = P115Client(cookies)
-                    cls._cookies_cache = cookies
-                    logger.debug("  ✅ P115Client 实例已(重新)初始化")
+                    auth_str = auth_str.strip()
+                    # ★ 核心判断：如果填入的是 g3cts. 开头的字符串，说明是 Access Token！
+                    if auth_str.startswith("g3cts.") or len(auth_str) == 128:
+                        logger.info("  🚀 检测到 115 Access Token，正在初始化官方 OpenAPI 客户端！(免疫 405)")
+                        cls._client = P115OpenAPIClient(auth_str)
+                    else:
+                        # 否则回退到老版本的 Cookie 模式
+                        if P115Client is None:
+                            raise ImportError("未安装 p115client")
+                        logger.warning("  ⚠️ 正在使用 Cookie 模式初始化 115 客户端 (存在 405 风险)")
+                        cls._client = P115Client(auth_str)
+                        cls._client.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                    
+                    cls._cookies_cache = auth_str
                 except Exception as e:
-                    logger.error(f"  ❌ P115Client 初始化失败: {e}")
+                    logger.error(f"  ❌ 115 客户端初始化失败: {e}")
                     return None
             
-            # ★★★ 全局限流逻辑 ★★★
+            # 全局限流逻辑
             try:
                 interval = float(config.get(constants.CONFIG_OPTION_115_INTERVAL, 5.0))
             except (ValueError, TypeError):
@@ -128,7 +208,6 @@ class P115Service:
             
             if elapsed < interval:
                 sleep_time = interval - elapsed
-                # 只有等待时间超过1秒才打印日志，避免刷屏
                 if sleep_time > 1:
                     logger.debug(f"  ⏳ [115限流] 全局等待 {sleep_time:.2f} 秒...")
                 time.sleep(sleep_time)
