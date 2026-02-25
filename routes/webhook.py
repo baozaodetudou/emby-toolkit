@@ -53,6 +53,10 @@ STREAM_CHECK_MAX_RETRIES = 60   # 最大重试次数
 STREAM_CHECK_INTERVAL = 10      # 每次轮询间隔(秒)
 STREAM_CHECK_SEMAPHORE = Semaphore(5) # 限制并发预检的数量，防止大量入库时查挂 Emby
 
+# MP 临时目录延迟清理定时器 ★★★
+MP_TEMP_DIR_TIMERS = {}
+MP_TEMP_DIR_LOCK = threading.Lock()
+
 def _handle_full_processing_flow(processor: 'MediaProcessor', item_id: str, force_full_update: bool, new_episode_ids: Optional[List[str]] = None, is_new_item: bool = True):
     """
     【Webhook 统一入口】
@@ -682,23 +686,36 @@ def emby_webhook():
                 success = organizer.execute(real_root_item, target_cid, delete_source=False)
                 
                 if success:
-                    # ★★★ 核心修改 2：异步延迟删除 MP 临时目录 ★★★
+                    # 异步延迟删除 MP 临时目录 (带重置防抖机制) 
                     if current_parent_cid and str(current_parent_cid) != '0':
-                        # 设置延迟时间：900秒 (15分钟)，足够 MP 传完一整季了
-                        delay_seconds = 900 
-                        logger.info(f"  ⏳ [MP上传] 整理成功，已安排在 {delay_seconds//60} 分钟后静默清理临时目录。")
+                        delay_seconds = 900 # 15分钟
                         
                         def _delayed_delete_temp_dir(cid):
                             try:
                                 c = P115Service.get_client()
                                 if c:
-                                    logger.info(f"  🧹 [延迟清理] 正在清理 MP 临时目录 (CID: {cid})")
+                                    logger.info(f"  🧹 [延迟清理] 倒计时结束，正在清理 MP 临时目录 (CID: {cid})")
                                     c.fs_delete([cid])
                             except Exception as e:
                                 logger.warning(f"  ⚠️ 延迟清理临时目录失败: {e}")
-                                
-                        # 使用 gevent 的 spawn_later 开启异步定时炸弹
-                        spawn_later(delay_seconds, _delayed_delete_temp_dir, current_parent_cid)
+                            finally:
+                                # 执行完毕后，从字典中移除自己，防止内存泄漏
+                                with MP_TEMP_DIR_LOCK:
+                                    if cid in MP_TEMP_DIR_TIMERS:
+                                        del MP_TEMP_DIR_TIMERS[cid]
+                                        
+                        # 使用锁来安全地管理定时器
+                        with MP_TEMP_DIR_LOCK:
+                            # 1. 如果这个目录已经有倒计时了，杀掉旧的倒计时
+                            if current_parent_cid in MP_TEMP_DIR_TIMERS:
+                                MP_TEMP_DIR_TIMERS[current_parent_cid].kill()
+                                logger.debug(f"  ⏳ [MP上传] 目录 (CID: {current_parent_cid}) 正在持续上传，已重置清理倒计时 ({delay_seconds//60}分钟)。")
+                            else:
+                                logger.info(f"  ⏳ [MP上传] 整理成功，已安排在 {delay_seconds//60} 分钟后静默清理临时目录。")
+                            
+                            # 2. 创建一个新的倒计时，并存入字典
+                            new_timer = spawn_later(delay_seconds, _delayed_delete_temp_dir, current_parent_cid)
+                            MP_TEMP_DIR_TIMERS[current_parent_cid] = new_timer
 
                     return jsonify({"status": "success_organized"}), 200
                 else:
