@@ -132,10 +132,20 @@ class P115OpenAPIClient:
             logger.debug(f"  🎬 [115 OpenAPI] download_url 响应: {json_resp}")
             
             if json_resp.get("state") and json_resp.get("data"):
-                # 官方返回的数据结构是 {"data": {"文件ID": {"url": "真实直链"}}}
+                # 官方返回的数据结构是 {"data": {"文件ID": {"url": {"url": "真实直链"}}}}
                 for k, v in json_resp["data"].items():
-                    if isinstance(v, dict) and "url" in v:
-                        return v["url"]
+                    if isinstance(v, dict):
+                        url_obj = v.get("url")
+                        if url_obj:
+                            # url 字段可能是字符串，也可能是 {"url": "实际链接"} 的嵌套结构
+                            if isinstance(url_obj, dict):
+                                download_url = url_obj.get("url")
+                            else:
+                                download_url = url_obj
+                            
+                            if download_url and isinstance(download_url, str):
+                                logger.info(f"  🎬 [115 OpenAPI] 获取到直链: {download_url[:100]}...")
+                                return download_url
             return None
         except Exception as e:
             logger.error(f"  ❌ [115 OpenAPI] download_url 请求失败: {e}")
