@@ -263,7 +263,7 @@ def get_115_status():
             "user_info": None
         }
         
-        # 优先检查 Token
+        # 1. 优先检查 Token (OpenAPI 官方接口，极安全)
         if token:
             openapi_client = P115Service.get_openapi_client()
             if openapi_client:
@@ -273,24 +273,49 @@ def get_115_status():
                         result["valid"] = True
                         result["msg"] = "Token 有效 (OpenAPI)"
                         result["user_info"] = user_resp.get('data', {})
-                        # 如果也有 Cookie，一并提示
+                        
+                        # 如果也有 Cookie，顺便轻量级探测一下 (★ 绝对不初始化 P115Client)
                         if cookie:
-                            result["msg"] = "Token + Cookie 均已配置"
+                            try:
+                                headers = {
+                                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                                    "Cookie": cookie
+                                }
+                                # 用极轻量的官方目录接口探测 Cookie 存活状态
+                                resp = requests.get("https://webapi.115.com/files?cid=0&limit=1", headers=headers, timeout=5).json()
+                                if resp.get('state'):
+                                    result["msg"] = "Token + Cookie 均有效"
+                                else:
+                                    result["msg"] = "Token 有效，但 Cookie 已失效！请重新扫码"
+                            except:
+                                result["msg"] = "Token 有效，Cookie 状态未知"
+                                
                         return jsonify({"status": "success", "data": result})
+                    else:
+                        result["msg"] = f"Token 无效: {user_resp.get('message', '未知错误')}"
                 except Exception as e:
-                    result["msg"] = f"Token 无效: {str(e)}"
+                    result["msg"] = f"Token 检查异常: {str(e)}"
             else:
                 result["msg"] = "Token 初始化失败"
         
-        # 如果没有 Token，检查 Cookie
+        # 2. 如果没有 Token，或者 Token 失效，轻量级检查 Cookie (★ 绝对不初始化 P115Client)
         if cookie and not result.get("user_info"):
-            cookie_client = P115Service.get_cookie_client()
-            if cookie_client:
-                result["valid"] = True
-                result["msg"] = "仅配置 Cookie (播放专用)"
-                return jsonify({"status": "success", "data": result})
-            else:
-                result["msg"] = "Cookie 无效或 p115client 未安装"
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                    "Cookie": cookie
+                }
+                resp = requests.get("https://webapi.115.com/files?cid=0&limit=1", headers=headers, timeout=10).json()
+                if resp.get('state'):
+                    result["valid"] = True
+                    result["msg"] = "仅配置 Cookie (播放专用)"
+                    # Cookie 模式下随便给个标识，防止前端报错
+                    result["user_info"] = {"user_name": "Cookie用户(正常)"}
+                    return jsonify({"status": "success", "data": result})
+                else:
+                    result["msg"] = "Cookie 已失效或被风控拦截"
+            except Exception as e:
+                result["msg"] = f"Cookie 检查失败: {str(e)}"
         
         if not token and not cookie:
             result["msg"] = "未配置任何凭证"
