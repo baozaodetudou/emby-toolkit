@@ -33,123 +33,113 @@ class P115OpenAPIClient:
         }
 
     def fs_files(self, payload):
-        """获取文件列表 - 官方API使用GET方法"""
         url = f"{self.base_url}/open/ufile/files"
-        # 官方接口默认参数 - 使用Query参数
-        params = {"show_dir": 1, "limit": 50, "offset": 0}
-        if isinstance(payload, dict):
-            params.update(payload)
-        
+        params = {"show_dir": 1, "limit": 1000, "offset": 0}
+        if isinstance(payload, dict): params.update(payload)
         try:
-            resp = requests.get(url, params=params, headers=self.headers, timeout=30)
-            logger.debug(f"  📡 [115 OpenAPI] fs_files 请求: {url}, params: {params}")
-            logger.debug(f"  📡 [115 OpenAPI] fs_files 响应状态: {resp.status_code}")
-            if resp.status_code != 200:
-                logger.warning(f"  📡 [115 OpenAPI] fs_files 响应内容: {resp.text[:500]}")
-            json_resp = resp.json()
-            logger.debug(f"  📡 [115 OpenAPI] fs_files 响应: {json_resp}")
-            
-            # 官方API返回的字段与老库不同，需要转换
-            # fn->n, fc->file_category (0=folder, 1=file), pc->pickcode, fid->fid (文件夹也有fid!)
-            if json_resp.get("state") and json_resp.get("data"):
-                for item in json_resp["data"]:
-                    # 1. 文件名: fn -> n
-                    if 'fn' in item:
-                        item['n'] = item.get('fn')
-                    # 2. 文件ID: fid (保持不变，文件夹也有fid!)
-                    # 3. 文件分类: fc (0=文件夹, 1=文件)
-                    fc = item.get('fc')
-                    # ★★★ 关键修复：文件夹也有 fid！用 fc 来判断类型，而不是 fid 是否存在 ★★★
-                    if fc == '0' or fc == 0:
-                        # 文件夹：确保有 cid 字段（使用 fid 作为 cid）
-                        if 'cid' not in item:
-                            item['cid'] = item.get('fid')
-                    # 4. 文件大小: fs -> s
-                    if 'fs' in item and 's' not in item:
-                        item['s'] = item.get('fs')
-                    # 5. 提取码: pc (保持不变)
-                    # 6. 父目录ID: pid (保持不变)
-                    # 7. 添加调试日志
-                    logger.debug(f"  📂 [115] 转换后字段: n={item.get('n')}, fid={item.get('fid')}, cid={item.get('cid')}, fc={fc}")
-                    
-            return json_resp
+            resp = requests.get(url, params=params, headers=self.headers, timeout=30).json()
+            if resp.get("state") and resp.get("data"):
+                for item in resp["data"]:
+                    item['n'] = item.get('fn', '')
+                    item['cid'] = item.get('fid', '')
+                    item['s'] = item.get('fs', 0)
+            return resp
         except Exception as e:
-            logger.error(f"  ❌ [115 OpenAPI] fs_files 请求失败: {e}")
             return {"state": False, "error_msg": str(e)}
 
-    def fs_files_app(self, payload):
-        """兼容旧代码的调用，直接转给 fs_files"""
-        return self.fs_files(payload)
+    def fs_files_app(self, payload): return self.fs_files(payload)
 
     def fs_mkdir(self, name, pid):
-        """创建文件夹"""
         url = f"{self.base_url}/open/folder/add"
-        data = {"pid": str(pid), "file_name": str(name)}
-        resp = requests.post(url, data=data, headers=self.headers).json()
-        
-        # 兼容老库的返回值格式
-        if resp.get("state") and "data" in resp:
-            resp["cid"] = resp["data"].get("file_id")
+        resp = requests.post(url, data={"pid": str(pid), "file_name": str(name)}, headers=self.headers).json()
+        if resp.get("state") and "data" in resp: resp["cid"] = resp["data"].get("file_id")
         return resp
 
     def fs_move(self, fid, to_cid):
-        """移动文件"""
-        url = f"{self.base_url}/open/ufile/move"
-        data = {"file_ids": str(fid), "to_cid": str(to_cid)}
-        return requests.post(url, data=data, headers=self.headers).json()
+        return requests.post(f"{self.base_url}/open/ufile/move", data={"file_ids": str(fid), "to_cid": str(to_cid)}, headers=self.headers).json()
 
     def fs_rename(self, fid_name_tuple):
-        """重命名文件 (接收元组是为了兼容老库用法)"""
-        fid, new_name = fid_name_tuple
-        url = f"{self.base_url}/open/ufile/update"
-        data = {"file_id": str(fid), "file_name": str(new_name)}
-        return requests.post(url, data=data, headers=self.headers).json()
+        return requests.post(f"{self.base_url}/open/ufile/update", data={"file_id": str(fid_name_tuple[0]), "file_name": str(fid_name_tuple[1])}, headers=self.headers).json()
 
     def fs_delete(self, fids):
-        """删除文件"""
-        url = f"{self.base_url}/open/ufile/delete"
-        if isinstance(fids, list):
-            fids = ",".join([str(f) for f in fids])
-        data = {"file_ids": str(fids)}
-        return requests.post(url, data=data, headers=self.headers).json()
+        fids_str = ",".join([str(f) for f in fids]) if isinstance(fids, list) else str(fids)
+        return requests.post(f"{self.base_url}/open/ufile/delete", data={"file_ids": fids_str}, headers=self.headers).json()
 
     def download_url(self, pick_code, user_agent=None):
-        """获取下载直链"""
         url = f"{self.base_url}/open/ufile/downurl"
-        data = {"pick_code": str(pick_code)}
-        
-        # 添加 Content-Type
         headers = dict(self.headers)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-        
+        if user_agent: headers["User-Agent"] = user_agent
         try:
-            resp = requests.post(url, data=data, headers=headers, timeout=30)
-            logger.debug(f"  🎬 [115 OpenAPI] download_url 请求: {url}, pick_code: {pick_code}")
-            logger.debug(f"  🎬 [115 OpenAPI] download_url 响应状态: {resp.status_code}")
-            if resp.status_code != 200:
-                logger.warning(f"  🎬 [115 OpenAPI] download_url 响应内容: {resp.text[:500]}")
-            json_resp = resp.json()
-            logger.debug(f"  🎬 [115 OpenAPI] download_url 响应: {json_resp}")
-            
-            if json_resp.get("state") and json_resp.get("data"):
-                # 官方返回的数据结构是 {"data": {"文件ID": {"url": {"url": "真实直链"}}}}
-                for k, v in json_resp["data"].items():
+            resp = requests.post(url, data={"pick_code": str(pick_code)}, headers=headers, timeout=30).json()
+            if resp.get("state") and resp.get("data"):
+                for k, v in resp["data"].items():
                     if isinstance(v, dict):
-                        url_obj = v.get("url")
-                        if url_obj:
-                            # url 字段可能是字符串，也可能是 {"url": "实际链接"} 的嵌套结构
-                            if isinstance(url_obj, dict):
-                                download_url = url_obj.get("url")
-                            else:
-                                download_url = url_obj
-                            
-                            if download_url and isinstance(download_url, str):
-                                logger.info(f"  🎬 [115 OpenAPI] 获取到直链: {download_url[:100]}...")
-                                return download_url
+                        url_info = v.get("url")
+                        return url_info.get("url") if isinstance(url_info, dict) else url_info
             return None
-        except Exception as e:
-            logger.error(f"  ❌ [115 OpenAPI] download_url 请求失败: {e}")
+        except Exception:
             return None
+
+# ======================================================================
+# ★★★ 究极缝合怪：混合双打客户端 (OpenAPI防405 + Cookie防403) ★★★
+# ======================================================================
+class Hybrid115Client:
+    def __init__(self, access_token, cookie_str):
+        self.openapi = P115OpenAPIClient(access_token) if access_token else None
+        self.webapi = None
+        if cookie_str and P115Client:
+            try:
+                self.webapi = P115Client(cookie_str)
+                # ★★★ 核心修复：删除了强行伪装 Chrome UA 的代码！★★★
+                # 必须让它保持原样，这样才能把播放器的真实 UA 透传给 115，防止 CDN 报 403！
+            except Exception as e:
+                logger.warning(f"  ⚠️ Cookie 客户端初始化失败 (仅影响播放): {e}")
+
+    def fs_files(self, payload):
+        if self.openapi: return self.openapi.fs_files(payload)
+        if self.webapi: return self.webapi.fs_files(payload)
+        return {"state": False, "error_msg": "未配置任何 115 凭证"}
+
+    def fs_files_app(self, payload):
+        if self.openapi: return self.openapi.fs_files_app(payload)
+        if self.webapi:
+            try: return self.webapi.fs_files_app(payload)
+            except: return self.webapi.fs_files(payload)
+        return {"state": False, "error_msg": "未配置任何 115 凭证"}
+
+    def fs_mkdir(self, name, pid):
+        if self.openapi: return self.openapi.fs_mkdir(name, pid)
+        return self.webapi.fs_mkdir(name, pid)
+
+    def fs_move(self, fid, to_cid):
+        if self.openapi: return self.openapi.fs_move(fid, to_cid)
+        return self.webapi.fs_move(fid, to_cid)
+
+    def fs_rename(self, fid_name_tuple):
+        if self.openapi: return self.openapi.fs_rename(fid_name_tuple)
+        return self.webapi.fs_rename(fid_name_tuple)
+
+    def fs_delete(self, fids):
+        if self.openapi: return self.openapi.fs_delete(fids)
+        return self.webapi.fs_delete(fids)
+
+    def download_url(self, pick_code, user_agent=None):
+        # ★★★ 播放直链优先使用 Cookie，并透传播放器的真实 UA ★★★
+        if self.webapi:
+            try:
+                # 这里的 user_agent 就是 Emby 播放器传过来的真实身份
+                url_obj = self.webapi.download_url(pick_code, user_agent=user_agent)
+                if url_obj:
+                    logger.info(f"  🎬 [Hybrid] 成功获取绑定 UA ({str(user_agent)[:15]}...) 的 302 直链！")
+                    return str(url_obj)
+            except Exception as e:
+                logger.warning(f"  ⚠️ [Hybrid] Cookie 获取直链失败，尝试回退 OpenAPI: {e}")
+        
+        if self.openapi:
+            logger.warning("  ⚠️ [Hybrid] 正在使用 OpenAPI 获取直链 (播放器可能会报 403 Forbidden)")
+            return self.openapi.download_url(pick_code, user_agent=user_agent)
+        return None
 
 
 # ======================================================================
@@ -228,30 +218,40 @@ class P115Service:
 
     @classmethod
     def get_client(cls):
-        """获取全局唯一的 115 客户端实例 (支持 OpenAPI 和 Cookie 双模式)"""
         config = get_config()
-        # 我们让用户把 Token 填在原来的 Cookie 输入框里
-        auth_str = config.get(constants.CONFIG_OPTION_115_COOKIES)
+        auth_str = config.get(constants.CONFIG_OPTION_115_COOKIES, "").strip()
         
-        if not auth_str:
-            return None
+        if not auth_str: return None
 
         with cls._lock:
             if cls._client is None or auth_str != cls._cookies_cache:
                 try:
-                    auth_str = auth_str.strip()
-                    # ★ 核心判断：如果填入的是 g3cts. 开头的字符串，说明是 Access Token！
-                    if auth_str.startswith("g3cts.") or len(auth_str) == 128:
-                        logger.info("  🚀 检测到 115 Access Token，正在初始化官方 OpenAPI 客户端！(免疫 405)")
-                        cls._client = P115OpenAPIClient(auth_str)
-                    else:
-                        # 否则回退到老版本的 Cookie 模式
-                        if P115Client is None:
-                            raise ImportError("未安装 p115client")
-                        logger.warning("  ⚠️ 正在使用 Cookie 模式初始化 115 客户端 (存在 405 风险)")
-                        cls._client = P115Client(auth_str)
-                        cls._client.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                    access_token = None
+                    cookie_str = None
                     
+                    # ★ 核心解析逻辑：支持同时填入 Token 和 Cookie，用 ||| 隔开
+                    if "|||" in auth_str:
+                        parts = auth_str.split("|||")
+                        for p in parts:
+                            p = p.strip()
+                            if p.startswith("g3cts.") or len(p) == 128:
+                                access_token = p
+                            elif "UID=" in p or "CID=" in p:
+                                cookie_str = p
+                    else:
+                        if auth_str.startswith("g3cts.") or len(auth_str) == 128:
+                            access_token = auth_str
+                        else:
+                            cookie_str = auth_str
+
+                    if access_token and cookie_str:
+                        logger.info("  🚀 [115] 检测到双凭证！启用混合双打模式 (OpenAPI防405 + Cookie防403)")
+                    elif access_token:
+                        logger.info("  🚀 [115] 仅检测到 Access Token，启用纯 OpenAPI 模式 (注意：播放可能403)")
+                    else:
+                        logger.warning("  ⚠️ [115] 仅检测到 Cookie，启用纯 WebAPI 模式 (注意：扫描可能405)")
+
+                    cls._client = Hybrid115Client(access_token, cookie_str)
                     cls._cookies_cache = auth_str
                 except Exception as e:
                     logger.error(f"  ❌ 115 客户端初始化失败: {e}")
