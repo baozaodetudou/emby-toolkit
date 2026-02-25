@@ -688,7 +688,7 @@ def emby_webhook():
                 if success:
                     # 异步延迟删除 MP 临时目录 (带重置防抖机制) 
                     if current_parent_cid and str(current_parent_cid) != '0':
-                        delay_seconds = 900 # 15分钟
+                        delay_seconds = 3600 # 60分钟
                         
                         def _delayed_delete_temp_dir(cid):
                             try:
